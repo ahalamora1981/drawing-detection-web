@@ -22,6 +22,10 @@ npm-debug.log*
 __pycache__/
 *.py[oc]
 
+# user uploads + per-run detection artifacts
+uploads/
+output/test_results/
+
 # typescript
 *.tsbuildinfo
 next-env.d.ts

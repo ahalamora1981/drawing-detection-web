@@ -1,5 +1,5 @@
 {
-  "image_path": "D:\\Dev\\Infosys\\Cisco\\drawing-detection\\web\\images\\tests\\test-004.png",
+  "image_path": "/home/development/drawing-detection-web/images/tests/test-004.png",
   "image_width": 1023,
   "image_height": 549,
   "dimensions": [
@@ -34,7 +34,7 @@
       "unit": "mm",
       "dimension_type": "radius",
       "feature_classification": "Hole/Punch Diameter",
-      "confidence": 0.55,
+      "confidence": 0.9,
       "bbox": {
         "top_left_x": 611.0,
         "top_left_y": 105.0,
@@ -45,66 +45,6 @@
     },
     {
       "item_id": "dim_003",
-      "raw_text": "R35 ±0.1",
-      "nominal_value": 35.0,
-      "tolerance": 0.1,
-      "tolerance_plus": 0.1,
-      "tolerance_minus": -0.1,
-      "quantity": 1,
-      "unit": "mm",
-      "dimension_type": "radius",
-      "feature_classification": "Hole/Punch Diameter",
-      "confidence": 0.45,
-      "bbox": {
-        "top_left_x": 0.0,
-        "top_left_y": 0.0,
-        "bottom_right_x": 0.0,
-        "bottom_right_y": 0.0
-      },
-      "needs_review": true
-    },
-    {
-      "item_id": "dim_004",
-      "raw_text": "30°",
-      "nominal_value": 30.0,
-      "tolerance": null,
-      "tolerance_plus": null,
-      "tolerance_minus": null,
-      "quantity": 1,
-      "unit": "degree",
-      "dimension_type": "angle",
-      "feature_classification": "Angle/Bend",
-      "confidence": 0.45,
-      "bbox": {
-        "top_left_x": 0.0,
-        "top_left_y": 0.0,
-        "bottom_right_x": 0.0,
-        "bottom_right_y": 0.0
-      },
-      "needs_review": true
-    },
-    {
-      "item_id": "dim_005",
-      "raw_text": "R10",
-      "nominal_value": 10.0,
-      "tolerance": null,
-      "tolerance_plus": null,
-      "tolerance_minus": null,
-      "quantity": 1,
-      "unit": "mm",
-      "dimension_type": "radius",
-      "feature_classification": "Hole/Punch Diameter",
-      "confidence": 0.45,
-      "bbox": {
-        "top_left_x": 0.0,
-        "top_left_y": 0.0,
-        "bottom_right_x": 0.0,
-        "bottom_right_y": 0.0
-      },
-      "needs_review": true
-    },
-    {
-      "item_id": "dim_006",
       "raw_text": "120°",
       "nominal_value": 120.0,
       "tolerance": null,
@@ -114,16 +54,76 @@
       "unit": "degree",
       "dimension_type": "angle",
       "feature_classification": "Angle/Bend",
-      "confidence": 0.45,
+      "confidence": 0.9,
       "bbox": {
-        "top_left_x": 0.0,
-        "top_left_y": 0.0,
-        "bottom_right_x": 0.0,
-        "bottom_right_y": 0.0
+        "top_left_x": 112.0,
+        "top_left_y": 207.0,
+        "bottom_right_x": 139.0,
+        "bottom_right_y": 253.0
       },
-      "needs_review": true
+      "needs_review": false
+    },
+    {
+      "item_id": "dim_004",
+      "raw_text": "R35 ±0.1",
+      "nominal_value": 35.0,
+      "tolerance": 0.1,
+      "tolerance_plus": 0.1,
+      "tolerance_minus": -0.1,
+      "quantity": 1,
+      "unit": "mm",
+      "dimension_type": "radius",
+      "feature_classification": "Hole/Punch Diameter",
+      "confidence": 0.9,
+      "bbox": {
+        "top_left_x": 522.0,
+        "top_left_y": 248.0,
+        "bottom_right_x": 585.0,
+        "bottom_right_y": 320.0
+      },
+      "needs_review": false
+    },
+    {
+      "item_id": "dim_005",
+      "raw_text": "30°",
+      "nominal_value": 30.0,
+      "tolerance": null,
+      "tolerance_plus": null,
+      "tolerance_minus": null,
+      "quantity": 1,
+      "unit": "degree",
+      "dimension_type": "angle",
+      "feature_classification": "Angle/Bend",
+      "confidence": 0.9,
+      "bbox": {
+        "top_left_x": 405.0,
+        "top_left_y": 292.0,
+        "bottom_right_x": 437.0,
+        "bottom_right_y": 324.0
+      },
+      "needs_review": false
+    },
+    {
+      "item_id": "dim_006",
+      "raw_text": "R10",
+      "nominal_value": 10.0,
+      "tolerance": null,
+      "tolerance_plus": null,
+      "tolerance_minus": null,
+      "quantity": 1,
+      "unit": "mm",
+      "dimension_type": "radius",
+      "feature_classification": "Hole/Punch Diameter",
+      "confidence": 0.9,
+      "bbox": {
+        "top_left_x": 142.0,
+        "top_left_y": 367.0,
+        "bottom_right_x": 178.0,
+        "bottom_right_y": 404.0
+      },
+      "needs_review": false
     }
   ],
   "total_detected": 6,
-  "needs_review_count": 4
+  "needs_review_count": 0
 }

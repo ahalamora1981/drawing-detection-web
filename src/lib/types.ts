@@ -35,8 +35,9 @@ export interface TestImage {
   displayName: string;
   thumbnailUrl: string;
   fullUrl: string;
-  result?: DetectionResult;
-  annotatedUrl?: string;
+  result?: DetectionResult | null;
+  annotatedUrl?: string | null;
+  source?: "test" | "upload";
 }
 
 export interface ComparisonResult {

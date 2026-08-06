@@ -1,5 +1,5 @@
 {
-  "image_path": "D:\\Dev\\Infosys\\Cisco\\drawing-detection-web\\images\\tests\\test-003.png",
+  "image_path": "/home/development/drawing-detection-web/images/tests/test-003.png",
   "image_width": 1020,
   "image_height": 543,
   "dimensions": [
@@ -39,7 +39,7 @@
         "top_left_x": 649.7,
         "top_left_y": 58.1,
         "bottom_right_x": 876.2,
-        "bottom_right_y": 81.5
+        "bottom_right_y": 77.6
       },
       "needs_review": true
     },
@@ -87,7 +87,7 @@
       "item_id": "dim_005",
       "raw_text": "Φ40 +0.02 -0.01",
       "nominal_value": 40.0,
-      "tolerance": null,
+      "tolerance": 0.02,
       "tolerance_plus": null,
       "tolerance_minus": null,
       "quantity": 1,
@@ -102,8 +102,48 @@
         "bottom_right_y": 257.0
       },
       "needs_review": true
+    },
+    {
+      "item_id": "dim_006",
+      "raw_text": "SECTION A-A",
+      "nominal_value": 0.0,
+      "tolerance": null,
+      "tolerance_plus": null,
+      "tolerance_minus": null,
+      "quantity": 1,
+      "unit": "mm",
+      "dimension_type": "linear",
+      "feature_classification": "Edge-to-Edge",
+      "confidence": 0.4,
+      "bbox": {
+        "top_left_x": 730.0,
+        "top_left_y": 369.0,
+        "bottom_right_x": 860.0,
+        "bottom_right_y": 392.0
+      },
+      "needs_review": false
+    },
+    {
+      "item_id": "dim_007",
+      "raw_text": "CIRCULAR FLANGE - MULTIPLIER TEST",
+      "nominal_value": 0.0,
+      "tolerance": null,
+      "tolerance_plus": null,
+      "tolerance_minus": null,
+      "quantity": 1,
+      "unit": "mm",
+      "dimension_type": "linear",
+      "feature_classification": "Edge-to-Edge",
+      "confidence": 0.4,
+      "bbox": {
+        "top_left_x": 688.0,
+        "top_left_y": 458.0,
+        "bottom_right_x": 1013.0,
+        "bottom_right_y": 484.0
+      },
+      "needs_review": false
     }
   ],
-  "total_detected": 5,
+  "total_detected": 7,
   "needs_review_count": 2
 }

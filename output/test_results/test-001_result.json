@@ -1,5 +1,5 @@
 {
-  "image_path": "D:\\Dev\\Infosys\\Cisco\\drawing-detection-web\\images\\tests\\test-001.png",
+  "image_path": "/home/development/drawing-detection-web/images/tests/test-001.png",
   "image_width": 1020,
   "image_height": 540,
   "dimensions": [

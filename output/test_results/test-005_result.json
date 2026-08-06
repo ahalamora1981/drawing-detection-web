@@ -1,5 +1,5 @@
 {
-  "image_path": "D:\\Dev\\Infosys\\Cisco\\drawing-detection-web\\images\\tests\\test-005.png",
+  "image_path": "/home/development/drawing-detection-web/images/tests/test-005.png",
   "image_width": 1022,
   "image_height": 546,
   "dimensions": [
@@ -47,7 +47,7 @@
       "item_id": "dim_003",
       "raw_text": "12.5 +0.00 -0.02",
       "nominal_value": 12.5,
-      "tolerance": 0.02,
+      "tolerance": 0.0,
       "tolerance_plus": null,
       "tolerance_minus": null,
       "quantity": 1,

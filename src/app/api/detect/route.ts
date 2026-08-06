@@ -3,6 +3,8 @@ import { execFile } from "child_process";
 import fs from "fs";
 import path from "path";
 import { promisify } from "util";
+import { withBasePath } from "@/lib/basePath";
+import { findUpload, getUploadsDir } from "@/lib/uploadStore";
 
 const execFileAsync = promisify(execFile);
 
@@ -70,12 +72,17 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Invalid filename" }, { status: 400 });
     }
 
-    const imagePath = path.join(TESTS_DIR, safeName);
+    // Resolve the image: uploaded files (unique storage names) take
+    // precedence, otherwise fall back to the bundled test drawings.
+    const uploadMeta = findUpload(safeName);
+    const imagePath = uploadMeta
+      ? path.join(getUploadsDir(), uploadMeta.storageName)
+      : path.join(TESTS_DIR, safeName);
     if (!fs.existsSync(imagePath)) {
       return NextResponse.json({ error: "Image not found" }, { status: 404 });
     }
 
-    const stem = safeName.replace(/\.png$/, "");
+    const stem = path.parse(safeName).name;
     const resultPath = path.join(OUTPUT_DIR, `${stem}_result.json`);
     const annotatedPath = path.join(OUTPUT_DIR, `${stem}_annotated.png`);
 
@@ -131,9 +138,9 @@ print(json.dumps(result.to_dict()))
         status: "detected",
         result,
         // Cache-busting param so the browser always fetches the fresh image
-        annotatedUrl: `/api/annotated?name=${encodeURIComponent(
+        annotatedUrl: withBasePath(`/api/annotated?name=${encodeURIComponent(
           safeName
-        )}&t=${Date.now()}`,
+        )}&t=${Date.now()}`),
       });
     } catch (execError: unknown) {
       const errMsg =

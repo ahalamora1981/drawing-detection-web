@@ -5,6 +5,7 @@ import Header from "@/components/Header";
 import ImageSelector from "@/components/ImageSelector";
 import ImageComparison from "@/components/ImageComparison";
 import DimensionTable from "@/components/DimensionTable";
+import { withBasePath } from "@/lib/basePath";
 import type { TestImage, DetectionResult } from "@/lib/types";
 
 export default function Home() {
@@ -27,6 +28,67 @@ export default function Home() {
 
   const timerStartRef = useRef<number | null>(null);
 
+  // Session id lives only in JS memory (no cookie/localStorage), so a page
+  // refresh starts a fresh session and clears the user's uploads from view.
+  const sessionRef = useRef<string | null>(null);
+  if (!sessionRef.current) {
+    sessionRef.current =
+      typeof crypto !== "undefined" && crypto.randomUUID
+        ? crypto.randomUUID()
+        : `s-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  }
+
+  const uploadedCount =
+    images.filter((img) => img.source === "upload").length;
+
+  // Upload a single image (click-to-browse or drag & drop).
+  const handleUpload = useCallback(
+    async (file: File) => {
+      if (!file) return;
+      const isPng = file.type === "image/png";
+      const isJpg = file.type === "image/jpeg";
+      if (!isPng && !isJpg) {
+        setError("Only PNG and JPG images are allowed.");
+        return;
+      }
+      if (file.size > 10 * 1024 * 1024) {
+        setError("Image must be 10 MB or smaller.");
+        return;
+      }
+      if (uploadedCount >= 5) {
+        setError(
+          "Maximum 5 uploads per session. Refresh the page to upload more."
+        );
+        return;
+      }
+
+      setError(null);
+      const form = new FormData();
+      form.append("file", file);
+      form.append("session", sessionRef.current!);
+
+      try {
+        const res = await fetch(withBasePath("/api/upload"), {
+          method: "POST",
+          body: form,
+        });
+        const data = await res.json();
+        if (!res.ok) {
+          throw new Error(data.error || "Upload failed");
+        }
+        // Append the new image and auto-select it.
+        setImages((prev) => {
+          const updated = [...prev, data.image];
+          setSelectedIndex(updated.length - 1);
+          return updated;
+        });
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Upload failed");
+      }
+    },
+    [uploadedCount]
+  );
+
   // Tick the live timer while a detection is running; stopped on completion.
   useEffect(() => {
     if (!detecting) return;
@@ -45,7 +107,9 @@ export default function Home() {
   useEffect(() => {
     async function fetchImages() {
       try {
-        const res = await fetch("/api/images");
+        const res = await fetch(
+          withBasePath(`/api/images?session=${sessionRef.current}`)
+        );
         if (!res.ok) throw new Error("Failed to load images");
         const data = await res.json();
         setImages(data.images);
@@ -83,7 +147,7 @@ export default function Home() {
     setError(null);
 
     try {
-      const res = await fetch("/api/detect", {
+      const res = await fetch(withBasePath("/api/detect"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ filename: targetFilename }),
@@ -100,7 +164,7 @@ export default function Home() {
       // fetches the freshly drawn bounding boxes instead of a cached copy.
       const baseUrl =
         data.annotatedUrl ||
-        `/api/annotated?name=${encodeURIComponent(selectedImage.filename)}`;
+        withBasePath(`/api/annotated?name=${encodeURIComponent(selectedImage.filename)}`);
       const freshAnnotatedUrl = `${baseUrl}${baseUrl.includes("?") ? "&" : "?"}t=${Date.now()}`;
 
       // Update the image data with new results
@@ -160,6 +224,7 @@ export default function Home() {
           images={images}
           selectedIndex={selectedIndex}
           onSelect={setSelectedIndex}
+          onUpload={handleUpload}
         />
 
         {/* Main content */}
