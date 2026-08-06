@@ -1,0 +1,89 @@
+{
+  "image_path": "D:\\Dev\\Infosys\\Cisco\\drawing-detection-web\\images\\tests\\test-005.png",
+  "image_width": 1022,
+  "image_height": 546,
+  "dimensions": [
+    {
+      "item_id": "dim_001",
+      "raw_text": "60 ±0.05",
+      "nominal_value": 60.0,
+      "tolerance": 0.05,
+      "tolerance_plus": 0.05,
+      "tolerance_minus": -0.05,
+      "quantity": 1,
+      "unit": "mm",
+      "dimension_type": "linear",
+      "feature_classification": "Edge-to-Edge",
+      "confidence": 0.9,
+      "bbox": {
+        "top_left_x": 348.0,
+        "top_left_y": 44.0,
+        "bottom_right_x": 429.0,
+        "bottom_right_y": 65.0
+      },
+      "needs_review": false
+    },
+    {
+      "item_id": "dim_002",
+      "raw_text": "25 +0.10 -0.05",
+      "nominal_value": 25.0,
+      "tolerance": 0.1,
+      "tolerance_plus": null,
+      "tolerance_minus": null,
+      "quantity": 1,
+      "unit": "mm",
+      "dimension_type": "linear",
+      "feature_classification": "Edge-to-Edge",
+      "confidence": 0.45,
+      "bbox": {
+        "top_left_x": 0.0,
+        "top_left_y": 0.0,
+        "bottom_right_x": 0.0,
+        "bottom_right_y": 0.0
+      },
+      "needs_review": true
+    },
+    {
+      "item_id": "dim_003",
+      "raw_text": "12.5 +0.00 -0.02",
+      "nominal_value": 12.5,
+      "tolerance": 0.02,
+      "tolerance_plus": null,
+      "tolerance_minus": null,
+      "quantity": 1,
+      "unit": "mm",
+      "dimension_type": "linear",
+      "feature_classification": "Edge-to-Edge",
+      "confidence": 0.55,
+      "bbox": {
+        "top_left_x": 550.0,
+        "top_left_y": 77.0,
+        "bottom_right_x": 626.0,
+        "bottom_right_y": 160.0
+      },
+      "needs_review": false
+    },
+    {
+      "item_id": "dim_004",
+      "raw_text": "GAUGE SLIDE - ASYMMETRIC TEST",
+      "nominal_value": 0.0,
+      "tolerance": null,
+      "tolerance_plus": null,
+      "tolerance_minus": null,
+      "quantity": 1,
+      "unit": "mm",
+      "dimension_type": "linear",
+      "feature_classification": "Thickness",
+      "confidence": 0.4,
+      "bbox": {
+        "top_left_x": 689.0,
+        "top_left_y": 463.0,
+        "bottom_right_x": 1014.0,
+        "bottom_right_y": 490.0
+      },
+      "needs_review": false
+    }
+  ],
+  "total_detected": 4,
+  "needs_review_count": 1
+}

@@ -1,0 +1,109 @@
+{
+  "image_path": "D:\\Dev\\Infosys\\Cisco\\drawing-detection-web\\images\\tests\\test-003.png",
+  "image_width": 1020,
+  "image_height": 543,
+  "dimensions": [
+    {
+      "item_id": "dim_001",
+      "raw_text": "Φ120 mm",
+      "nominal_value": 120.0,
+      "tolerance": null,
+      "tolerance_plus": null,
+      "tolerance_minus": null,
+      "quantity": 1,
+      "unit": "mm",
+      "dimension_type": "diameter",
+      "feature_classification": "Hole/Punch Diameter",
+      "confidence": 0.55,
+      "bbox": {
+        "top_left_x": 303.0,
+        "top_left_y": 39.0,
+        "bottom_right_x": 390.0,
+        "bottom_right_y": 60.0
+      },
+      "needs_review": false
+    },
+    {
+      "item_id": "dim_002",
+      "raw_text": "4X Φ10 ±0.05",
+      "nominal_value": 10.0,
+      "tolerance": 0.05,
+      "tolerance_plus": 0.05,
+      "tolerance_minus": -0.05,
+      "quantity": 4,
+      "unit": "mm",
+      "dimension_type": "diameter",
+      "feature_classification": "Hole/Punch Diameter",
+      "confidence": 0.45,
+      "bbox": {
+        "top_left_x": 649.7,
+        "top_left_y": 58.1,
+        "bottom_right_x": 876.2,
+        "bottom_right_y": 81.5
+      },
+      "needs_review": true
+    },
+    {
+      "item_id": "dim_003",
+      "raw_text": "Φ90 mm",
+      "nominal_value": 90.0,
+      "tolerance": null,
+      "tolerance_plus": null,
+      "tolerance_minus": null,
+      "quantity": 1,
+      "unit": "mm",
+      "dimension_type": "diameter",
+      "feature_classification": "Hole/Punch Diameter",
+      "confidence": 0.9,
+      "bbox": {
+        "top_left_x": 108.0,
+        "top_left_y": 228.0,
+        "bottom_right_x": 129.0,
+        "bottom_right_y": 307.0
+      },
+      "needs_review": false
+    },
+    {
+      "item_id": "dim_004",
+      "raw_text": "15 mm",
+      "nominal_value": 15.0,
+      "tolerance": null,
+      "tolerance_plus": null,
+      "tolerance_minus": null,
+      "quantity": 1,
+      "unit": "mm",
+      "dimension_type": "linear",
+      "feature_classification": "Edge-to-Edge",
+      "confidence": 0.55,
+      "bbox": {
+        "top_left_x": 849.0,
+        "top_left_y": 39.0,
+        "bottom_right_x": 910.0,
+        "bottom_right_y": 60.0
+      },
+      "needs_review": false
+    },
+    {
+      "item_id": "dim_005",
+      "raw_text": "Φ40 +0.02 -0.01",
+      "nominal_value": 40.0,
+      "tolerance": null,
+      "tolerance_plus": null,
+      "tolerance_minus": null,
+      "quantity": 1,
+      "unit": "mm",
+      "dimension_type": "diameter",
+      "feature_classification": "Hole/Punch Diameter",
+      "confidence": 0.5,
+      "bbox": {
+        "top_left_x": 678.0,
+        "top_left_y": 192.0,
+        "bottom_right_x": 720.0,
+        "bottom_right_y": 257.0
+      },
+      "needs_review": true
+    }
+  ],
+  "total_detected": 5,
+  "needs_review_count": 2
+}

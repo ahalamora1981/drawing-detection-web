@@ -1,0 +1,7 @@
+# Python dependencies for the bundled detection engine (web/python/)
+# Install with:  pip install -r requirements.txt
+# or create a venv:  python -m venv .venv && .venv/Scripts/pip install -r requirements.txt
+openai>=1.0.0
+pydantic>=2.0.0
+python-dotenv>=1.0.0
+Pillow>=10.0.0
