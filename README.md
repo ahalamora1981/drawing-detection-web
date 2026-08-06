@@ -29,8 +29,20 @@ python -m venv .venv
 cp .env.example .env   # then set LLM_API_KEY
 
 # 4. Run
-npm run dev            # http://localhost:3000
+npm run dev            # http://localhost:3000/dfm-demo
 ```
+
+> **Base path:** the app runs under the `/dfm-demo` prefix (see
+> `next.config.ts`). Visit `http://localhost:3000/dfm-demo`, **not** the bare
+> root (`/` 404s by design). Client-side fetches are prefixed via the
+> `NEXT_PUBLIC_BASE_PATH` env var — set it in `.env` to match:
+>
+> ```bash
+> echo 'NEXT_PUBLIC_BASE_PATH=/dfm-demo' >> .env
+> ```
+>
+> It must be present at build/run time or the upload/detect buttons will call
+> unprefixed `/api/*` URLs and 404.
 
 **Viewing works with zero setup** (browse drawings, see the UI). **Run
 Detection** additionally needs Python deps + an API key + network access to the
@@ -259,7 +271,7 @@ project's test runner); the web app does **not** display it at launch.
 
 ```bash
 npm run build
-npm start            # serves on :3000
+npm start            # serves on :3000, app at /dfm-demo
 ```
 
 Because the app is self-contained, the whole `web/` folder can be copied to a
