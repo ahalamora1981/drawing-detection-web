@@ -361,12 +361,12 @@ body {
 .image-viewer img {
   display: block;
   max-width: 100%;
-  /* Fit the whole drawing on screen: cap the height to the viewport minus
-     the header, page title, and view toggle so no vertical scrolling is
-     needed. Aspect ratio is preserved (width/height stay auto). On narrow
-     screens max-width wins; on wide/tall screens this keeps the drawing
-     fully visible without scrolling. */
-  max-height: calc(100vh - 280px);
+  /* Fit the whole drawing on screen: cap the height to 75% of the viewport
+     minus the header, page title, and view toggle (25% smaller than the
+     available area) so the full drawing is visible without scrolling. Aspect
+     ratio is preserved (width/height stay auto). On narrow screens max-width
+     wins; on wide/tall screens this keeps the drawing fully on screen. */
+  max-height: calc((100vh - 280px) * 0.75);
   width: auto;
   height: auto;
 }
