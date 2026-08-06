@@ -1,8 +1,17 @@
 // Server-side in-memory registry for user-uploaded drawings.
 //
 // Uploaded files are written to <web>/uploads/ on disk (so the Python
-// detection engine can read them by path), while metadata lives in a
-// module-level Map keyed by a client-generated session id.
+// detection engine can read them by path), while metadata lives in a Map
+// keyed by a client-generated session id.
+//
+// The registry MUST live on globalThis, not as a plain module-level Map.
+// In Next.js dev mode every route handler is compiled into its own module
+// graph, so a module-level `const store = new Map()` is instantiated once
+// PER ROUTE: addUpload() in upload/route.ts and findUpload()/getUploads()
+// in detect/route.ts and images/route.ts would each mutate a different
+// (empty) registry, and running detection on a just-uploaded image would
+// always 404 with "Image not found". globalThis-backed state is shared
+// across every route bundle in both dev and production.
 //
 // Lifecycle:
 //   - Session-scoped: the client generates a fresh random session id in JS
@@ -27,7 +36,18 @@ const TTL_MS = Number(process.env.UPLOAD_TTL_MS ?? 60 * 60 * 1000); // 1 hour
 const MAX_UPLOADS_PER_SESSION = 5;
 const SWEEP_INTERVAL_MS = 10 * 60 * 1000; // 10 minutes
 
-const store = new Map<string, UploadMeta[]>();
+const GLOBAL_STORE_KEY = "__uploadStoreRegistry__";
+
+/** Shared registry instance (see comment above for why globalThis). */
+function getStore(): Map<string, UploadMeta[]> {
+  const g = globalThis as unknown as Record<string, unknown>;
+  if (!g[GLOBAL_STORE_KEY]) {
+    g[GLOBAL_STORE_KEY] = new Map<string, UploadMeta[]>();
+  }
+  return g[GLOBAL_STORE_KEY] as Map<string, UploadMeta[]>;
+}
+
+const store = getStore();
 
 export class UploadLimitError extends Error {
   constructor() {
