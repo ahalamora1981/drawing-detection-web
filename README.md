@@ -104,6 +104,15 @@ Browser re-renders: results table + annotated image (cache-busted URL)
 - **Robust parser** — the LLM sometimes returns strings (`"tolerance": "+/-0.03"`)
   or `null`; `_coerce_number()` in `parser.py` normalizes these so a single bad
   field never crashes a run.
+- **Verified localization** — every dimension's location is confirmed by
+  reading the cropped text region after CV refinement; if the text doesn't
+  match, a global search of all text regions relocates the box to the
+  annotation actually printed there. This fixes bboxes that land on
+  title-block prose (e.g. `"10 ±0.05"` mis-placed on `"BASEPLATE - MM TEST"`).
+- **Title/prose exclusion** — the extraction prompt explicitly forbids
+  treating titles, title blocks, notes, and part names as dimensions, and
+  requires bboxes to tightly enclose the text at its true printed location
+  (including vertical/rotated dimension text).
 
 ---
 
@@ -133,6 +142,8 @@ web/
 │   ├── tests/                      test drawings + reference results
 │   │   ├── test-001.png … test-005.png
 │   │   └── tests_results.json      reference/expected data (not shown at launch)
+│   ├── sample-002.png              extra sample drawing (kept out of tests/,
+│   │                               so it is not listed in the app sidebar)
 │   └── reference/                  source reference drawings
 ├── python/
 │   └── drawing_detection/          bundled Python detection engine (copied from
@@ -143,6 +154,8 @@ web/
 ├── public/
 │   └── fonts/                      self-hosted woff2 (Cormorant Garamond, Inter,
 │                                   JetBrains Mono) — no external font CDN
+├── .agents/skills/                 project-level agent skills (see “Agent Skills”)
+├── skills-lock.json                pinned skill sources/hashes for .agents/skills
 ├── .env                            LLM config (git-ignored; see .env.example)
 ├── requirements.txt                Python deps for the bundled engine
 └── package.json                    Node deps & scripts
@@ -249,6 +262,20 @@ Defined in `src/app/globals.css` as CSS custom properties, plus `src/lib/constan
 
 `tests_results.json` holds reference/expected data (used by the parent
 project's test runner); the web app does **not** display it at launch.
+
+`images/sample-002.png` is an extra sample drawing kept outside `images/tests/`
+(so it is not listed in the app sidebar); it can be used for manual testing.
+
+---
+
+## Agent Skills
+
+The project ships agent skills under `.agents/skills/`, pinned by
+`skills-lock.json` (installed from the `addyosmani/agent-skills` repository).
+They let coding agents apply consistent workflows — debugging, git hygiene,
+TDD, code review, and more. Reinstall or update them with your agent's skill
+installer; treat the vendored copies as generated output rather than editing
+them directly.
 
 ---
 
