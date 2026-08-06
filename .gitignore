@@ -32,3 +32,6 @@ next-env.d.ts
 
 # pi subagent runtime artifacts
 .pi-subagents/
+
+# playwright-cli browser session artifacts
+.playwright-cli/
