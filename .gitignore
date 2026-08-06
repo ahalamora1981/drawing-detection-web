@@ -29,3 +29,6 @@ output/test_results/
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# pi subagent runtime artifacts
+.pi-subagents/
