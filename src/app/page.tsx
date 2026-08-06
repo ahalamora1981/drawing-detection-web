@@ -332,7 +332,7 @@ export default function Home() {
                         whiteSpace: "nowrap",
                       }}
                     >
-                      Detection may take 10&ndash;20 seconds
+                      Detection may take 10&ndash;20 seconds, it may take longer for the first run.
                     </div>
                   </div>
 
