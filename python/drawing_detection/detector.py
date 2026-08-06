@@ -274,18 +274,71 @@ class DrawingDetector:
             if not target:
                 continue
             matched = False
+            local_checked: set[int] = set()
+            # 1) Local candidates: groups near the LLM/provisional location
             for dist, gi in cands[: self.VERIFY_MAX_CROPS]:
+                local_checked.add(gi)
                 read = read_group(gi)
-                if read and normalize_raw_text(read).lower() == target:
+                if read and self._texts_match(read, dim.raw_text):
                     dim.bbox = group_bbox(groups[gi], img.width, img.height)
                     dim.confidence = min(0.9, dim.confidence + 0.1)
                     dim.needs_review = False
                     matched = True
                     break
+            # 2) Global fallback: the LLM sometimes misplaces a dimension's
+            #    bbox entirely (e.g. onto a title-block caption). If no local
+            #    group holds this text, scan ALL text groups for one that
+            #    does. Reads are cached per group, so extra groups cost one
+            #    cheap crop-read each. Matching is strict (normalized
+            #    equality), so this cannot relocate to unrelated text.
+            if not matched:
+                for gi in range(len(groups)):
+                    if gi in local_checked:
+                        continue
+                    read = read_group(gi)
+                    if read and self._texts_match(read, dim.raw_text):
+                        dim.bbox = group_bbox(groups[gi], img.width, img.height)
+                        dim.confidence = min(0.9, dim.confidence + 0.1)
+                        dim.needs_review = False
+                        matched = True
+                        break
             if not matched:
                 # Could not confirm any candidate location holds this text
                 dim.confidence = min(dim.confidence, 0.5)
                 dim.needs_review = True
+
+    @staticmethod
+    def _texts_match(read_text: str, raw_text: str) -> bool:
+        """True if a cropped region's text corresponds to a dimension text.
+
+        Requires normalized equality, plus a few strict, targeted variants:
+        - a trailing unit may be present on either side ("10 ±0.05" vs
+          "10 ±0.05 mm");
+        - the dimension may carry a quantity prefix the region read lacks
+          ("2XΦ12" vs "Φ12").
+
+        This deliberately does NOT do fuzzy/substring matching: the crop
+        reader occasionally paraphrases, and a loose match could relocate a
+        dimension onto unrelated text.
+        """
+
+        def norm(s: str) -> str:
+            return normalize_raw_text(s).lower().strip()
+
+        a, b = norm(read_text), norm(raw_text)
+        if not a or not b:
+            return False
+        if a == b:
+            return True
+        unit_re = re.compile(r"\s*(mm|inch|in|inches|degree|deg|°)$")
+        for x, y in ((a, b), (b, a)):
+            m = unit_re.search(x)
+            if m and x[: m.start()] == y:
+                return True
+        qty = re.match(r"^\d+[x×]\s*(.*)$", b)
+        if qty and qty.group(1).strip() == a:
+            return True
+        return False
 
     def _read_crop(self, crop: Image.Image) -> str:
         """Ask the LLM what text is printed in a cropped image region."""
