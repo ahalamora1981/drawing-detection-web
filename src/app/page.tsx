@@ -8,12 +8,36 @@ import DimensionTable from "@/components/DimensionTable";
 import { withBasePath } from "@/lib/basePath";
 import type { TestImage, DetectionResult } from "@/lib/types";
 
+// The whole app is gated by a PIN. The PIN is checked SERVER-SIDE
+// (APP_PIN in .env): the client validates it once per page load via
+// /api/verify-pin and keeps the result in memory only, so every page
+// refresh shows the PIN pop-up again.
+//
+// Feature flag: set to true to re-enable the PIN gate pop-up.
+const PIN_VERIFICATION_ENABLED = false;
+
+// Display name for an LLM channel (1 = local STG server, 2 = SaaS API).
+const channelName = (ch: number) => (ch === 2 ? "LLM（SaaS）" : "LLM（本地）");
+
 export default function Home() {
   const [images, setImages] = useState<TestImage[]>([]);
   const [selectedIndex, setSelectedIndex] = useState(0);
+  // Default to the SaaS API; the user can switch to the local server in
+  // the sidebar selector.
+  const [channel, setChannel] = useState<number>(2);
+  // App-wide PIN gate: verified once per page load via /api/verify-pin.
+  // The result lives only in memory, so every page refresh shows the
+  // PIN pop-up again. Wrong/cancelled PIN keeps the gate closed.
+  const [unlocked, setUnlocked] = useState(false);
+  const [pinInput, setPinInput] = useState("");
+  const [pinError, setPinError] = useState<string | null>(null);
+  const [verifying, setVerifying] = useState(false);
   const [loading, setLoading] = useState(true);
   const [detecting, setDetecting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Shown when the backend automatically failed over to the other LLM
+  // channel because the selected one was too slow.
+  const [channelNote, setChannelNote] = useState<string | null>(null);
 
   // Live timer value (0.1s precision) while a detection is running.
   const [elapsed, setElapsed] = useState(0);
@@ -40,6 +64,43 @@ export default function Home() {
 
   const uploadedCount =
     images.filter((img) => img.source === "upload").length;
+
+  // Channel switch handler: both channels are freely selectable now (the
+  // PIN gate protects the whole page, not a single channel).
+  const handleChannelChange = useCallback((value: number) => {
+    setChannel(value);
+  }, []);
+
+  const submitPin = async () => {
+    const entered = pinInput.trim();
+    if (!entered) {
+      setPinError("请输入 PIN。");
+      return;
+    }
+    setVerifying(true);
+    setPinError(null);
+    try {
+      const res = await fetch(withBasePath("/api/verify-pin"), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ pin: entered }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.ok) {
+        throw new Error(data.error || "PIN 错误。");
+      }
+      // Success is memory-only: a page refresh re-arms the gate.
+      setUnlocked(true);
+      setPinInput("");
+      setPinError(null);
+    } catch (err) {
+      // Wrong PIN: keep the gate closed, allow retry.
+      setPinError(err instanceof Error ? err.message : "PIN 错误。");
+      setPinInput("");
+    } finally {
+      setVerifying(false);
+    }
+  };
 
   // Upload a single image (click-to-browse or drag & drop).
   const handleUpload = useCallback(
@@ -145,12 +206,16 @@ export default function Home() {
     setDetectingFilename(targetFilename);
     setElapsed(0);
     setError(null);
+    setChannelNote(null);
 
     try {
       const res = await fetch(withBasePath("/api/detect"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ filename: targetFilename }),
+        body: JSON.stringify({
+          filename: targetFilename,
+          channel,
+        }),
       });
 
       if (!res.ok) {
@@ -159,6 +224,17 @@ export default function Home() {
       }
 
       const data = await res.json();
+
+      if (
+        typeof data.channelUsed === "number" &&
+        data.channelUsed !== channel
+      ) {
+        setChannelNote(
+          `已自动切换到 ${channelName(data.channelUsed)}（所选通道响应过慢）。`
+        );
+      } else {
+        setChannelNote(null);
+      }
 
       // Cache-bust: ensure the annotated image URL changes so the browser
       // fetches the freshly drawn bounding boxes instead of a cached copy.
@@ -189,12 +265,119 @@ export default function Home() {
       setDetectingFilename(null);
       setDetecting(false);
     }
-  }, [selectedImage, selectedIndex]);
+  }, [selectedImage, selectedIndex, channel]);
+
+  // App-wide PIN pop-up: shown on every page refresh until verified. The
+  // underlying app is inert while locked, so it cannot be interacted with.
+  const pinGate = (
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="pin-dialog-title"
+      style={{
+        position: "fixed",
+        inset: 0,
+        backgroundColor: "rgba(20, 20, 19, 0.65)",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        zIndex: 200,
+      }}
+    >
+      <div
+        style={{
+          width: 360,
+          maxWidth: "90vw",
+          backgroundColor: "var(--color-surface-card)",
+          borderRadius: 12,
+          border: "1px solid var(--color-hairline)",
+          padding: 24,
+          boxShadow: "0 16px 48px rgba(0, 0, 0, 0.2)",
+        }}
+      >
+        <h3
+          id="pin-dialog-title"
+          style={{
+            fontSize: 17,
+            fontWeight: 600,
+            color: "var(--color-ink)",
+            margin: "0 0 8px",
+          }}
+        >
+          PIN 验证
+        </h3>
+        <p
+          style={{
+            fontSize: 13,
+            color: "var(--color-muted)",
+            lineHeight: 1.6,
+            margin: "0 0 16px",
+          }}
+        >
+          该页面受 PIN 保护。请输入 PIN 解锁；每次刷新页面后需重新验证。
+        </p>
+        <input
+          type="password"
+          autoFocus
+          value={pinInput}
+          onChange={(e) => setPinInput(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") submitPin();
+          }}
+          placeholder="请输入 PIN"
+          style={{
+            width: "100%",
+            boxSizing: "border-box",
+            padding: "10px 12px",
+            fontSize: 16,
+            letterSpacing: "0.2em",
+            color: "var(--color-ink)",
+            backgroundColor: "var(--color-canvas)",
+            border: `1px solid ${
+              pinError
+                ? "var(--color-error)"
+                : "var(--color-hairline-strong, var(--color-muted-soft))"
+            }`,
+            borderRadius: 8,
+            outline: "none",
+          }}
+        />
+        {pinError && (
+          <p
+            style={{
+              fontSize: 13,
+              color: "var(--color-error)",
+              margin: "8px 0 0",
+            }}
+          >
+            {pinError}
+          </p>
+        )}
+        <div
+          style={{
+            display: "flex",
+            justifyContent: "flex-end",
+            gap: 10,
+            marginTop: 20,
+          }}
+        >
+          <button
+            className="btn-primary"
+            onClick={submitPin}
+            disabled={verifying}
+          >
+            {verifying ? "验证中…" : "确认"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
 
   if (loading) {
     return (
-      <div style={{ height: "100vh", display: "flex", flexDirection: "column" }}>
-        <Header />
+      <>
+        <div style={{ height: "100vh", display: "flex", flexDirection: "column" }}>
+          <Header />
         <div
           style={{
             flex: 1,
@@ -211,12 +394,20 @@ export default function Home() {
           </span>
         </div>
       </div>
+
+      {/* App-wide PIN pop-up — shows on every page refresh. */}
+      {PIN_VERIFICATION_ENABLED && !unlocked && pinGate}
+      </>
     );
   }
 
   return (
-    <div style={{ height: "100vh", display: "flex", flexDirection: "column" }}>
-      <Header />
+    <>
+      <div
+        style={{ height: "100vh", display: "flex", flexDirection: "column" }}
+        inert={PIN_VERIFICATION_ENABLED && !unlocked}
+      >
+        <Header />
 
       <div style={{ flex: 1, display: "flex", overflow: "hidden" }}>
         {/* Sidebar */}
@@ -225,6 +416,8 @@ export default function Home() {
           selectedIndex={selectedIndex}
           onSelect={setSelectedIndex}
           onUpload={handleUpload}
+          channel={channel}
+          onChannelChange={handleChannelChange}
         />
 
         {/* Main content */}
@@ -334,6 +527,19 @@ export default function Home() {
                     >
                       Detection may take 10&ndash;20 seconds, it may take longer for the first run.
                     </div>
+
+                    {/* Automatic channel failover note */}
+                    {channelNote && (
+                      <div
+                        style={{
+                          fontSize: 12,
+                          color: "var(--color-warning)",
+                          whiteSpace: "nowrap",
+                        }}
+                      >
+                        {channelNote}
+                      </div>
+                    )}
                   </div>
 
                   <button
@@ -344,7 +550,7 @@ export default function Home() {
                     {detecting ? (
                       <>
                         <div className="spinner" style={{ width: 16, height: 16 }} />
-                        Detecting…
+                        {`正在连接 ${channelName(channel)}…`}
                       </>
                     ) : (
                       <>
@@ -599,7 +805,12 @@ export default function Home() {
           )}
         </main>
       </div>
+
     </div>
+
+    {/* App-wide PIN pop-up — shows on every page refresh. */}
+    {PIN_VERIFICATION_ENABLED && !unlocked && pinGate}
+    </>
   );
 }
 

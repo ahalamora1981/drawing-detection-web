@@ -82,9 +82,31 @@ MAX_ASPECT_RATIO = 4.0           # wider => horizontal line, not text
 
 # Grouping thresholds (px, original space)
 MAX_GROUP_GAP = 9                # side/side or stack gap to chain components
-MAX_WORD_GAP = 45                # max horizontal gap inside one annotation
+# Max horizontal gap INSIDE one annotation. Kept moderate: the real fix
+# for two separate annotations that land on one baseline is _split_wide_group
+# (below), not a tiny gap limit (which could fragment a legitimately wide
+# annotation). The effective per-pair limit is further capped by
+# SPLIT_GAP_HEIGHTS * glyph-height in _group_components, so a 44px
+# inter-annotation gap no longer chains while sub-glyph word gaps still do.
+MAX_WORD_GAP = 40                # max horizontal gap inside one annotation
+# Max number of glyph-heights between the two halves of a horizontally
+# merged group before we split it back into two annotations.
+SPLIT_GAP_HEIGHTS = 2.4          # >=~2.4 glyph-heights => two annotations
 MAX_VERTICAL_TEXT_GAP = 14       # max vertical gap for stacked (rotated) text
 MIN_OVERLAP_FRACTION = 0.25      # required y/x overlap when chaining
+
+# Title-block / prose suppression: a group of many small glyphs on one
+# baseline spanning a very wide x-range is a title block, note, or caption
+# (e.g. "SUPPORT BRACKET - INCH TEST") - NOT a dimension. Such groups must
+# not become snap targets, or a nearby dimension box gets dragged onto them.
+TITLE_MIN_MEMBERS = 8            # enough glyphs to be prose
+TITLE_MIN_WIDTH = 190            # px; dimension text is usually < 160px wide
+TITLE_MAX_HEIGHT = 40            # px; title block sits on one baseline
+TITLE_MIN_ASPECT = 8.0           # width/height must be very wide
+# A borderline group (wide but a little taller than prose) may still be a
+# wide dimension; only drop it if it sits near the drawing border (bottom-)
+# where title blocks live.
+TITLE_BORDER_FRACTION = 0.78     # allowed only below this fraction of height
 
 # Refinement search window: candidates within this distance of the LLM
 # bbox center are considered (px, original space)
@@ -212,8 +234,11 @@ def _group_components(comps: list[Component]) -> list[TextGroup]:
                 overlap_y = min(max_y, comp.max_y) - max(min_y, comp.min_y)
                 min_h = min(max_y - min_y + 1, comp.max_y - comp.min_y + 1)
                 # word gaps must be relative to glyph size: two parallel
-                # vertical text columns are ~8+ char widths apart
-                gap_x_limit = min(word_gap, 3.0 * min_h)
+                # vertical text columns are ~8+ char widths apart.
+                # Use glyph-height-relative limit (SPLIT_GAP_HEIGHTS * min_h)
+                # capped at MAX_WORD_GAP, so chars of one annotation chain
+                # while two separate annotations on the same baseline do not.
+                gap_x_limit = min(word_gap, SPLIT_GAP_HEIGHTS * min_h)
                 horizontal = (
                     gap_y <= gap
                     and gap_x <= gap_x_limit
@@ -239,6 +264,158 @@ def _group_components(comps: list[Component]) -> list[TextGroup]:
     return groups
 
 
+def _split_wide_group(grp: TextGroup) -> list[TextGroup]:
+    """Split one horizontally-merged group back into separate annotations.
+
+    A dimension annotation's own glyphs are separated by sub-glyph gaps, but
+    a wide group may actually be TWO independent texts on the same baseline
+    (e.g. "Φ0.750 ±0.001 INCH" then "1.500 ±0.002 INCH" 44px apart).
+    If the members, in x-order, have a single gap far larger than their own
+    glyph pitch, we cut there and return two groups.
+
+    Only splits when there is a clear outlier gap (much bigger than the
+    median inter-glyph gap of the group) so we never split a normal
+    annotation.
+    """
+    if len(grp.members) < 4:
+        return [grp]
+    order = sorted(grp.members, key=lambda c: (c.min_x, c.min_y))
+    # Inter-member center gaps, in analysis space.
+    gaps = []
+    for i in range(1, len(order)):
+        dx = (order[i].min_x + order[i].max_x) / 2 - (
+            order[i - 1].min_x + order[i - 1].max_x
+        ) / 2
+        gaps.append(dx)
+    if not gaps:
+        return [grp]
+    med = sorted(gaps)[len(gaps) // 2]
+    if med <= 0:
+        return [grp]
+    # Find the largest gap that is > ~2x the typical glyph pitch and > ~2.4
+    # glyph-heights. Use median glyph height of the group for the height ref.
+    gh = sorted(c.height for c in grp.members)[len(grp.members) // 2]
+    height_ref = max(1.0, gh)
+    cut_idx = None
+    best = 0.0
+    for i, g in enumerate(gaps):
+        if g > 2.0 * med and g > SPLIT_GAP_HEIGHTS * height_ref and g > best:
+            best = g
+            cut_idx = i
+    if cut_idx is None:
+        return [grp]
+    left = order[: cut_idx + 1]
+    right = order[cut_idx + 1 :]
+
+    def make(members):
+        return TextGroup(
+            min(m.min_x for m in members),
+            min(m.min_y for m in members),
+            max(m.max_x for m in members),
+            max(m.max_y for m in members),
+            list(members),
+        )
+
+    return [make(left), make(right)]
+
+
+def _is_title_block(grp: TextGroup, image_height: int) -> bool:
+    """True if a group looks like prose/title-block text, not a dimension.
+
+    Title blocks (e.g. "SUPPORT BRACKET - INCH TEST") are many small glyphs
+    on one baseline spanning a wide x-range. A dimension annotation is
+    shorter and usually not wider than ~160px. To avoid dropping a genuinely
+    wide dimension, a group only qualifies when it is wide, very wide in
+    aspect, single-baseline, and (when merely borderline) sits low in the
+    image where title blocks live.
+
+    ``image_height`` must be supplied in the SAME space as the group coords
+    (original px).
+    """
+    if len(grp.members) < TITLE_MIN_MEMBERS:
+        return False
+    width = grp.max_x - grp.min_x
+    height = grp.max_y - grp.min_y
+    if width <= 0 or height <= 0:
+        return False
+    aspect = width / height
+    if width < TITLE_MIN_WIDTH or aspect < TITLE_MIN_ASPECT:
+        return False
+    if height > TITLE_MAX_HEIGHT:
+        # Too tall to be a one-line title block: could be a stacked dim.
+        return False
+    cy = (grp.min_y + grp.max_y) / 2.0
+    if cy < TITLE_BORDER_FRACTION * image_height:
+        # It is a wide group but not in the border/title zone; keep it as a
+        # candidate (could be a legitimately wide dimension).
+        return False
+    return True
+
+
+def _title_clusters(groups: list[TextGroup], image_height: int) -> set[int]:
+    """Return indexes of groups that belong to a title-block cluster.
+
+    A title block is often split into word-sized groups by _group_components
+    (word gaps exceed the intra-annotation gap limit), so no single piece is
+    wide enough to pass _is_title_block. Merge groups that sit on the same
+    baseline and are horizontally adjacent (within a word-gap) into a
+    cluster, then test the cluster as a whole. If it reads as a title block,
+    mark EVERY member of that cluster for removal.
+
+    Groups are only chained when they are genuinely close (a contiguous run
+    of prose). Far-apart groups on the same baseline stays separate, so a
+    real dimension near the title block is never swept up with it.
+    """
+    if not groups:
+        return set()
+    # Group by y-baseline band (within a word-height of each other).
+    by_y: list[list[int]] = []
+    band_max_y: list[float] = []
+    order = sorted(range(len(groups)), key=lambda i: (groups[i].min_y, groups[i].min_x))
+    for i in order:
+        g = groups[i]
+        placed = False
+        for bi, band in enumerate(by_y):
+            if g.min_y <= band_max_y[bi] + 6:  # ~same baseline
+                band.append(i)
+                band_max_y[bi] = max(band_max_y[bi], g.max_y)
+                placed = True
+                break
+        if not placed:
+            by_y.append([i])
+            band_max_y.append(g.max_y)
+    removed: set[int] = set()
+    for band in by_y:
+        if len(band) < 2:
+            continue
+        band_sorted = sorted(band, key=lambda i: groups[i].min_x)
+        # Segment the band into contiguous chains: a chain continues only
+        # while the next group starts within a word-gap of the running end.
+        # A gap clearly bigger than a word separates two distinct clusters.
+        CHAIN_GAP = 60
+        chains: list[list[int]] = []
+        cur: list[int] = [band_sorted[0]]
+        for i in band_sorted[1:]:
+            if groups[i].min_x - groups[cur[-1]].max_x <= CHAIN_GAP:
+                cur.append(i)
+            else:
+                chains.append(cur)
+                cur = [i]
+        chains.append(cur)
+        for chain in chains:
+            if len(chain) < 2:
+                continue
+            cmin_x = min(groups[i].min_x for i in chain)
+            cmin_y = min(groups[i].min_y for i in chain)
+            cmax_x = max(groups[i].max_x for i in chain)
+            cmax_y = max(groups[i].max_y for i in chain)
+            nmembers = sum(len(groups[i].members) for i in chain)
+            merged = TextGroup(cmin_x, cmin_y, cmax_x, cmax_y, [0] * nmembers)
+            if _is_title_block(merged, image_height):
+                removed.update(chain)
+    return removed
+
+
 def _distance(a: tuple[float, float], b: tuple[float, float]) -> float:
     return ((a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2) ** 0.5
 
@@ -255,19 +432,39 @@ def find_text_groups(image_path: str | Path) -> list[TextGroup]:
     groups = [
         g for g in _group_components(comps) if g.height >= MIN_TEXT_HEIGHT * ANALYSIS_SCALE
     ]
-    # Map back to original image space
-    scaled = []
-    for g in groups:
-        scaled.append(
-            TextGroup(
-                g.min_x // ANALYSIS_SCALE,
-                g.min_y // ANALYSIS_SCALE,
-                g.max_x // ANALYSIS_SCALE,
-                g.max_y // ANALYSIS_SCALE,
-                g.members,
-            )
+    # Convert one analysis-space group to original-space coords.
+    def _orig(g: TextGroup) -> TextGroup:
+        return TextGroup(
+            g.min_x // ANALYSIS_SCALE,
+            g.min_y // ANALYSIS_SCALE,
+            g.max_x // ANALYSIS_SCALE,
+            g.max_y // ANALYSIS_SCALE,
+            g.members,
         )
-    return scaled
+    # Drop title-block / prose-like groups so they cannot steal a dimension
+    # box. Detect on the FULL group BEFORE splitting: a title block is a wide
+    # run of glyphs (e.g. "BASEPLATE - MM TEST") that, if split first into
+    # word-sized pieces, would fall below the width/member thresholds here.
+    img_h = img.height // ANALYSIS_SCALE
+    # Remove title-block pieces: a wide group on its own, OR a same-baseline
+    # cluster of word-sized groups that together read as a title block.
+    # Title detection must use ORIGINAL-space coords (thresholds are in px),
+    # while _split_wide_group below needs ANALYSIS-space members. So build
+    # an original-space mirror purely for title detection.
+    orig_mirror = [_orig(g) for g in groups]
+    removed = _title_clusters(orig_mirror, img_h)
+    groups = [
+        g for i, g in enumerate(groups)
+        if i not in removed and not _is_title_block(orig_mirror[i], img_h)
+    ]
+    # Split horizontally-merged groups (two separate annotations joined on
+    # one baseline) back into individual annotations.
+    split: list[TextGroup] = []
+    for g in groups:
+        split.extend(_split_wide_group(g))
+    groups = split
+    # Map back to original image space
+    return [_orig(g) for g in groups]
 
 
 # --------------------------------------------------------------------------- #

@@ -8,6 +8,8 @@ interface ImageSelectorProps {
   selectedIndex: number;
   onSelect: (index: number) => void;
   onUpload: (file: File) => void;
+  channel: number;
+  onChannelChange: (channel: number) => void;
 }
 
 const MAX_UPLOADS = 5;
@@ -17,6 +19,8 @@ export default function ImageSelector({
   selectedIndex,
   onSelect,
   onUpload,
+  channel,
+  onChannelChange,
 }: ImageSelectorProps) {
   const [dragOver, setDragOver] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -310,6 +314,34 @@ export default function ImageSelector({
             {uploads.map((img, i) => renderItem(img, tests.length + i))}
           </>
         )}
+
+        {/* LLM channel selector — sits directly below the image list */}
+        <div
+          style={{
+            padding: "12px 12px 4px",
+            marginTop: 4,
+            borderTop: "1px solid var(--color-hairline)",
+          }}
+        >
+          <select
+            id="llm-channel"
+            value={channel}
+            onChange={(e) => onChannelChange(Number(e.target.value))}
+            style={{
+              width: "100%",
+              padding: "9px 10px",
+              fontSize: 14,
+              color: "var(--color-ink)",
+              backgroundColor: "var(--color-canvas)",
+              border: "1px solid var(--color-hairline-strong, var(--color-muted-soft))",
+              borderRadius: 8,
+              cursor: "pointer",
+            }}
+          >
+            <option value={2}>LLM（SaaS）</option>
+            <option value={1}>LLM（本地）</option>
+          </select>
+        </div>
       </div>
     </div>
   );

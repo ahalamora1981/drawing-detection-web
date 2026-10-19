@@ -95,8 +95,30 @@ Browser re-renders: results table + annotated image (cache-busted URL)
 
 ### Key design decisions
 
-- **Detection runs server-side** via `child_process.execFile` (2-minute
-  timeout). The inline script mirrors `detector.detect()` + `draw_bounding_boxes()`.
+- **Detection runs server-side** via `child_process.execFile` (6-minute
+  safety-net timeout). The inline script mirrors `detector.detect()` +
+  `draw_bounding_boxes()`. The Python side enforces its own per-call caps
+  (probe 5s / extract 45s / crop-read 15s) plus a 240s TOTAL LLM budget per
+  run, so slow channels abort with a clear message instead of hitting the
+  Node timeout.
+- **Single-flight** — the `/api/detect` route rejects concurrent detection
+  requests with HTTP 429, so two browser tabs can't double the LLM call
+  rate and trip gateway per-minute quotas.
+- **Manual channel switching** — the user picks `LLM（SaaS）` (channel 2,
+  the default) or `LLM（本地）` (channel 1) in the UI, freely (no
+  per-channel lock). Optional automatic failover is available via
+  `LLM_FAILOVER=1` (a call that times out is retried once on the other
+  channel); it is off by default.
+- **PIN gate on every page refresh** — the whole app is protected by a PIN
+  checked SERVER-SIDE (`APP_PIN` in `.env`): on every page load the UI
+  shows a PIN pop-up that is validated via `/api/verify-pin`. Success is
+  kept in memory only, so refreshing the page re-arms the pop-up. The PIN
+  is never shipped to the client.
+- **Thinking disabled per channel** — the STG server honors
+  `enable_reasoning`, DashScope honors `enable_thinking`; the default
+  per-channel extra body sends both (each server ignores the field it does
+  not know). On DashScope this cuts extraction time from ~1–2 minutes of
+  hidden reasoning tokens down to ~10–15s.
 - **No caching of results at launch** — the UI intentionally starts empty so
   staff see only what was actually detected in the current session.
 - **Cache-busted annotated URL** — `?t=<timestamp>` plus `Cache-Control:
@@ -170,7 +192,8 @@ web/
 | `/api/images` | GET | — | `{ images: [{ filename, displayName, thumbnailUrl, fullUrl, result: null, annotatedUrl: null }] }` — intentionally empty results at launch |
 | `/api/image?name=test-001.png` | GET | `name` (filename only, sanitized) | PNG bytes of the original drawing |
 | `/api/annotated?name=test-001.png[&t=ts]` | GET | `name`, optional `t` cache-buster | Annotated PNG if it exists, else the original (clean) PNG |
-| `/api/detect` | POST | `{ filename: "test-001.png" }` | `{ status: "detected", result: <DetectionResult>, annotatedUrl: "/api/annotated?name=…&t=<ts>" }` or `{ error, details }` |
+| `/api/detect` | POST | `{ filename: "test-001.png", channel: 1\|2 }` | `{ status: "detected", result: <DetectionResult>, channelUsed, annotatedUrl: "/api/annotated?name=…&t=<ts>" }` or `{ error, details }` |
+| `/api/verify-pin` | POST | `{ pin: "…" }` | `{ ok: true }`, or 401 `{ ok: false, error }` — used by the UI's PIN pop-up on every page refresh |
 
 All routes sanitize `name` with `path.basename` and reject `..` / paths.
 All filesystem paths derive from `process.cwd()` (the `web/` folder) — no
@@ -226,9 +249,16 @@ Defined in `src/app/globals.css` as CSS custom properties, plus `src/lib/constan
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `LLM_API_KEY` | — (required) | API key for the Vision LLM |
-| `LLM_BASE_URL` | `https://llm.stgaiserver.com/v1` | OpenAI-compatible endpoint |
-| `LLM_MODEL` | `/models/qwen3.6-35b-a3b.gguf` | Model ID |
+| `LLM_1_API_KEY` | — (required) | API key for `LLM（本地）` — channel 1 (STG AI server) |
+| `LLM_1_BASE_URL` | `https://llm.stgaiserver.com/v1` | OpenAI-compatible endpoint |
+| `LLM_1_MODEL` | `/models/qwen3.6-35b-a3b.gguf` | Model ID |
+| `LLM_2_API_KEY` | — (optional) | API key for `LLM（SaaS）` — channel 2, the UI default (Aliyun DashScope) |
+| `LLM_2_BASE_URL` | `https://dashscope.aliyuncs.com/compatible-mode/v1` | OpenAI-compatible endpoint |
+| `LLM_2_MODEL` | `qwen3.8-flash` | Model ID |
+| `APP_PIN` | — | PIN required to open the page (checked server-side; pop-up on every page refresh) |
+| `LLM_FAILOVER` | `0` (off) | Set `1` to enable automatic failover to the other channel |
+| `LLM_{1,2}_EXTRA_BODY` | `{"enable_reasoning": false, "enable_thinking": false}` | Per-channel extra request body (JSON) that disables model thinking |
+| `LLM_API_KEY` / `LLM_BASE_URL` / `LLM_MODEL` | — (legacy) | Single-channel fallback values, still supported |
 
 `web/.env` is git-ignored — on a fresh machine, copy `.env.example` and fill it in.
 
@@ -282,9 +312,13 @@ them directly.
 ## Troubleshooting
 
 - **Detection fails with "API key required"** → `web/.env` missing/empty; copy
-  from `.env.example` and set `LLM_API_KEY`.
+  from `.env.example` and set `LLM_1_API_KEY` (and optionally `LLM_2_API_KEY`).
 - **Detection fails / times out** → confirm Python deps installed
-  (`pip install -r requirements.txt`) and the server can reach `LLM_BASE_URL`.
+  (`pip install -r requirements.txt`). If you see "LLM 调用超时" the selected
+  channel was slow at that moment — switch to the other channel in the UI and
+  retry (or enable `LLM_FAILOVER=1` to do that automatically). If it happens
+  constantly, check the STG server load (`bench_channel1.py`) and your
+  DashScope quota.
 - **No boxes after Run Detection** → the annotated PNG is written to
   `web/output/test_results/`; if it's absent, the API errored — check the
   Next.js server console for the Python traceback.
