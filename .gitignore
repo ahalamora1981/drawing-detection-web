@@ -35,3 +35,6 @@ next-env.d.ts
 
 # playwright-cli browser session artifacts
 .playwright-cli/
+
+# python local run artifacts
+python/output/
