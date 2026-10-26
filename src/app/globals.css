@@ -108,6 +108,10 @@
   --color-warning: #d4a017;
   --color-error: #c64545;
 
+  /* Locate-stage boxes: deep navy, deliberately darker/desaturated than the
+     angle colour (#0000c8) so the two are never mistaken for each other. */
+  --dim-locate: #1e3a8a;
+
   /* Dimension type colors */
   --dim-linear: #00a000;
   --dim-diameter: #c80000;
@@ -972,6 +976,22 @@ body {
 
 .dbox--review {
   border-style: dashed;
+}
+
+/* Locate stage: navy over black drawing lines needs a white separator,
+   otherwise the border disappears where it crosses a dimension line. */
+.dbox--locate {
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.95);
+}
+
+.dbox--locate.dbox--selected {
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.95),
+    0 0 0 3px rgba(30, 58, 138, 0.3);
+}
+
+.dbox--locate:hover {
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.95),
+    0 0 0 3px rgba(30, 58, 138, 0.22);
 }
 
 .dbox--ghost {

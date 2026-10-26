@@ -416,7 +416,7 @@ function WorkspaceInner() {
 
               <span className="canvas-hint">
                 {editable
-                  ? "拖动空白处新增框 · 选中框后按 Delete 删除"
+                  ? "深蓝框＝候选位置 · 拖动空白处新增 · 选中后 Delete 删除"
                   : run?.stage === "reading"
                     ? "正在读取，框会逐条上色"
                     : ""}

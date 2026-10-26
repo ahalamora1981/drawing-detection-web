@@ -166,7 +166,7 @@ export default function BoxCanvas({
                 ? review
                   ? "var(--dim-review)"
                   : DIMENSION_COLORS[dim.dimension_type] ?? DIMENSION_COLORS.unknown
-                : "var(--color-body-strong)";
+                : "var(--dim-locate)";
 
             return (
               <div
@@ -174,6 +174,7 @@ export default function BoxCanvas({
                 data-box="1"
                 className={[
                   "dbox",
+                  mode === "locate" ? "dbox--locate" : "",
                   isSelected ? "dbox--selected" : "",
                   review ? "dbox--review" : "",
                   isHovered ? "dbox--selected" : "",
@@ -186,7 +187,8 @@ export default function BoxCanvas({
                   width: pct(box.w, imgW),
                   height: pct(box.h, imgH),
                   borderColor: color,
-                  borderWidth: isSelected || isHovered ? 2.5 : 1.5,
+                  borderWidth:
+                    mode === "locate" ? (isSelected || isHovered ? 3 : 2) : isSelected || isHovered ? 2.5 : 1.5,
                 }}
                 title={dim ? `${dim.raw_text}` : `标注 ${index + 1}`}
                 onPointerDown={(e) => {
