@@ -1,10 +1,21 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getProjectVar } from "@/lib/env";
+import { PIN_COOKIE, PIN_COOKIE_OPTIONS, issueToken } from "@/lib/pinAuth";
 
 // Verifies the app-level PIN. The PIN lives ONLY server-side (APP_PIN in
 // .env) and is never shipped to the client. The UI shows a PIN pop-up on
 // every page refresh and verifies it here; success is held in memory for
 // the current page session only, so a refresh re-arms the gate.
+
+/** Lets the client know whether a PIN is required at all. */
+export async function GET() {
+  const expected = getProjectVar("APP_PIN");
+  return NextResponse.json(
+    { required: !!expected },
+    { headers: { "Cache-Control": "no-store" } }
+  );
+}
+
 export async function POST(request: NextRequest) {
   let body: { pin?: string } = {};
   try {
@@ -23,7 +34,10 @@ export async function POST(request: NextRequest) {
     );
   }
   if (pin === expected) {
-    return NextResponse.json({ ok: true });
+    const res = NextResponse.json({ ok: true });
+    // HttpOnly proof of the PIN: cost-incurring API routes require it.
+    res.cookies.set(PIN_COOKIE, issueToken(), PIN_COOKIE_OPTIONS);
+    return res;
   }
   return NextResponse.json(
     { ok: false, error: "PIN 错误。" },

@@ -5,6 +5,10 @@ import { DIMENSION_COLORS } from "@/lib/constants";
 
 interface DimensionTableProps {
   dimensions: DetectedDimension[];
+  selectedId?: string | null;
+  hoveredId?: string | null;
+  onHover?: (id: string | null) => void;
+  onSelect?: (id: string | null) => void;
 }
 
 function confidenceClass(confidence: number): string {
@@ -16,15 +20,7 @@ function confidenceClass(confidence: number): string {
 function dimensionTypeBadge(type: string) {
   const color = DIMENSION_COLORS[type] || DIMENSION_COLORS.unknown;
   return (
-    <span
-      style={{
-        display: "inline-flex",
-        alignItems: "center",
-        gap: 6,
-        fontSize: 13,
-        fontWeight: 500,
-      }}
-    >
+    <span style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 13 }}>
       <span
         style={{
           width: 8,
@@ -39,18 +35,17 @@ function dimensionTypeBadge(type: string) {
   );
 }
 
-export default function DimensionTable({ dimensions }: DimensionTableProps) {
+export default function DimensionTable({
+  dimensions,
+  selectedId,
+  hoveredId,
+  onHover,
+  onSelect,
+}: DimensionTableProps) {
   if (dimensions.length === 0) {
     return (
-      <div
-        style={{
-          padding: 32,
-          textAlign: "center",
-          color: "var(--color-muted)",
-          fontSize: 14,
-        }}
-      >
-        No dimensions detected
+      <div style={{ padding: 32, textAlign: "center", color: "var(--color-muted)", fontSize: 14 }}>
+        暂无识别结果
       </div>
     );
   }
@@ -60,91 +55,134 @@ export default function DimensionTable({ dimensions }: DimensionTableProps) {
       <table className="results-table">
         <thead>
           <tr>
-            <th>ID</th>
-            <th>Raw Text</th>
-            <th>Nominal</th>
-            <th>Tolerance</th>
-            <th>Unit</th>
-            <th>Type</th>
-            <th>Feature</th>
-            <th>Confidence</th>
-            <th>Status</th>
+            <th style={{ width: 54 }}>#</th>
+            <th>原始文字</th>
+            <th>公称值</th>
+            <th>公差</th>
+            <th>单位</th>
+            <th>类型</th>
+            <th>特征</th>
+            <th>置信度</th>
+            <th>状态</th>
           </tr>
         </thead>
         <tbody>
-          {dimensions.map((dim) => (
-            <tr key={dim.item_id}>
-              <td
-                style={{
-                  fontFamily: "monospace",
-                  fontSize: 13,
-                  color: "var(--color-muted)",
-                }}
+          {dimensions.map((dim, index) => {
+            const isSelected = selectedId === dim.item_id;
+            const isHovered = hoveredId === dim.item_id;
+            const failed = dim.raw_text.startsWith("读取失败");
+            return (
+              <tr
+                key={dim.item_id}
+                className={[
+                  isSelected ? "is-selected" : "",
+                  isHovered ? "is-hovered" : "",
+                ]
+                  .filter(Boolean)
+                  .join(" ")}
+                onMouseEnter={() => onHover?.(dim.item_id)}
+                onMouseLeave={() => onHover?.(null)}
+                onClick={() => onSelect?.(isSelected ? null : dim.item_id)}
+                style={{ cursor: "pointer" }}
               >
-                {dim.item_id}
-              </td>
-              <td
-                style={{
-                  fontFamily: '"JetBrains Mono", monospace',
-                  fontSize: 13,
-                  fontWeight: 500,
-                  color: "var(--color-ink)",
-                }}
-              >
-                {dim.raw_text}
-              </td>
-              <td style={{ fontWeight: 500 }}>{dim.nominal_value}</td>
-              <td>
-                {dim.tolerance !== null ? (
-                  <span style={{ fontFamily: "monospace", fontSize: 13 }}>
-                    ±{dim.tolerance}
-                  </span>
-                ) : dim.tolerance_plus !== null && dim.tolerance_minus !== null ? (
-                  <span style={{ fontFamily: "monospace", fontSize: 13 }}>
-                    +{dim.tolerance_plus} / {dim.tolerance_minus}
-                  </span>
-                ) : (
-                  <span style={{ color: "var(--color-muted-soft)" }}>—</span>
-                )}
-              </td>
-              <td>
-                <span
-                  style={{
-                    fontSize: 12,
-                    fontWeight: 500,
-                    padding: "2px 8px",
-                    borderRadius: 4,
-                    backgroundColor: "var(--color-surface-soft)",
-                    color: "var(--color-body)",
-                  }}
-                >
-                  {dim.unit}
-                </span>
-              </td>
-              <td>{dimensionTypeBadge(dim.dimension_type)}</td>
-              <td style={{ fontSize: 13 }}>{dim.feature_classification}</td>
-              <td>
-                <span className={confidenceClass(dim.confidence)}>
-                  {(dim.confidence * 100).toFixed(0)}%
-                </span>
-              </td>
-              <td>
-                {dim.needs_review ? (
-                  <span className="needs-review">⚠ Review</span>
-                ) : (
+                <td>
                   <span
                     style={{
-                      color: "var(--color-success)",
-                      fontSize: 13,
-                      fontWeight: 500,
+                      display: "inline-flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      minWidth: 22,
+                      height: 18,
+                      padding: "0 4px",
+                      borderRadius: 3,
+                      backgroundColor: "var(--color-body-strong)",
+                      color: "#fff",
+                      fontFamily: '"JetBrains Mono", monospace',
+                      fontSize: 10,
                     }}
                   >
-                    ✓ OK
+                    {index + 1}
                   </span>
-                )}
-              </td>
-            </tr>
-          ))}
+                </td>
+                <td
+                  style={{
+                    fontFamily: '"JetBrains Mono", monospace',
+                    fontSize: 13,
+                    fontWeight: 500,
+                    color: failed ? "var(--color-error)" : "var(--color-ink)",
+                  }}
+                >
+                  {dim.raw_text}
+                </td>
+                <td style={{ fontWeight: 500 }}>
+                  {failed ? "—" : dim.nominal_value}
+                </td>
+                <td>
+                  {(() => {
+                    const plus = dim.tolerance_plus;
+                    const minus = dim.tolerance_minus;
+                    const asymmetric =
+                      plus !== null &&
+                      minus !== null &&
+                      Math.abs(plus + minus) > 1e-9;
+                    if (asymmetric) {
+                      return (
+                        <span style={{ fontFamily: "monospace", fontSize: 13 }}>
+                          +{plus} / {minus}
+                        </span>
+                      );
+                    }
+                    if (dim.tolerance !== null) {
+                      return (
+                        <span style={{ fontFamily: "monospace", fontSize: 13 }}>
+                          ±{dim.tolerance}
+                        </span>
+                      );
+                    }
+                    return (
+                      <span style={{ color: "var(--color-muted-soft)" }}>—</span>
+                    );
+                  })()}
+                </td>
+                <td>
+                  <span
+                    style={{
+                      fontSize: 12,
+                      fontWeight: 500,
+                      padding: "2px 8px",
+                      borderRadius: 4,
+                      backgroundColor: "var(--color-surface-soft)",
+                      color: "var(--color-body)",
+                    }}
+                  >
+                    {dim.unit}
+                  </span>
+                </td>
+                <td>{dimensionTypeBadge(dim.dimension_type)}</td>
+                <td style={{ fontSize: 13 }}>{dim.feature_classification}</td>
+                <td>
+                  <span className={confidenceClass(dim.confidence)}>
+                    {(dim.confidence * 100).toFixed(0)}%
+                  </span>
+                </td>
+                <td>
+                  {dim.needs_review ? (
+                    <span className="needs-review">⚠ 待复核</span>
+                  ) : (
+                    <span
+                      style={{
+                        color: "var(--color-success)",
+                        fontSize: 13,
+                        fontWeight: 500,
+                      }}
+                    >
+                      ✓ OK
+                    </span>
+                  )}
+                </td>
+              </tr>
+            );
+          })}
         </tbody>
       </table>
     </div>

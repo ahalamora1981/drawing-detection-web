@@ -1,10 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
 import path from "path";
 import { withBasePath } from "@/lib/basePath";
+import { deleteRunsForFile } from "@/lib/runStore";
+import { requirePin } from "@/lib/pinGuard";
 import {
   addUpload,
   UploadLimitError,
   getMaxUploads,
+  removeUpload,
 } from "@/lib/uploadStore";
 import {
   MAX_UPLOAD_BYTES,
@@ -15,6 +18,9 @@ import {
 const ALLOWED_EXTENSIONS = [".png", ".jpg", ".jpeg"];
 
 export async function POST(request: NextRequest) {
+  const denied = requirePin(request);
+  if (denied) return denied;
+
   try {
     const form = await request.formData();
     const file = form.get("file");
@@ -61,6 +67,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({
         image: {
           filename: meta.storageName,
+          originalName: meta.originalName,
           displayName: deriveDisplayName(meta.originalName),
           thumbnailUrl: withBasePath(
             `/api/image?name=${encodeURIComponent(meta.storageName)}`
@@ -68,8 +75,7 @@ export async function POST(request: NextRequest) {
           fullUrl: withBasePath(
             `/api/image?name=${encodeURIComponent(meta.storageName)}`
           ),
-          result: null,
-          annotatedUrl: null,
+          run: null,
           source: "upload",
         },
       });
@@ -91,4 +97,26 @@ export async function POST(request: NextRequest) {
       { status: 500 }
     );
   }
+}
+
+/** Delete one of this session's uploads (file + metadata + its runs). */
+export async function DELETE(request: NextRequest) {
+  const denied = requirePin(request);
+  if (denied) return denied;
+
+  const name = request.nextUrl.searchParams.get("name") ?? "";
+  const session = request.nextUrl.searchParams.get("session") ?? "";
+  if (!name || !session) {
+    return NextResponse.json({ error: "Missing name or session" }, { status: 400 });
+  }
+  const safeName = path.basename(name);
+  if (safeName !== name || name.includes("..")) {
+    return NextResponse.json({ error: "Invalid filename" }, { status: 400 });
+  }
+  const removed = removeUpload(session, safeName);
+  if (!removed) {
+    return NextResponse.json({ error: "Upload not found" }, { status: 404 });
+  }
+  deleteRunsForFile(safeName);
+  return NextResponse.json({ ok: true });
 }

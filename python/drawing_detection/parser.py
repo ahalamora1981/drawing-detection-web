@@ -14,7 +14,7 @@ from .classifier import classify_dimension
 
 # Regexes for common dimension formats
 _QTY_RE = re.compile(r"^(\d+)\s*[Xx×]\s*")            # "4X Φ10 ±0.05" -> quantity 4
-_DIAMETER_RE = re.compile(r"[ΦφØ⌀]")                  # diameter symbols
+_DIAMETER_RE = re.compile(r"[ΦφØ⌀∅ø]")               # diameter symbols (incl. ∅ from OCR)
 _ANGLE_RE = re.compile(r"[°˚]")                        # degree symbols
 _RADIUS_RE = re.compile(r"(?<![A-Za-z])[Rr]\s*(\d+\.?\d*)")  # "R5"
 _SYMMETRIC_TOL_RE = re.compile(r"[±]\s*(\d+\.?\d*)")   # "±0.025"
@@ -23,6 +23,21 @@ _ASYMMETRIC_TOL_RE = re.compile(
 )  # "+0.1/-0.05"
 _NUMBER_RE = re.compile(r"\d+\.?\d*")
 _UNIT_RE = re.compile(r"\b(mm|inch|in|inches|degree|deg|°)\b", re.IGNORECASE)
+# Stacked tolerances printed without a slash: "+0.02-0.01"
+_STACKED_TOL_RE = re.compile(r"[+]\s*(\d+\.?\d*)\s*[-−]\s*(\d+\.?\d*)")
+
+# Vision models often transcribe stacked tolerances as Unicode super/subscripts
+# ("Φ40⁺⁰·⁰²₋₀.₀₁"). Fold them back to plain characters before parsing.
+_SUPERSCRIPT_MAP = str.maketrans({
+    "⁰": "0", "¹": "1", "²": "2", "³": "3", "⁴": "4",
+    "⁵": "5", "⁶": "6", "⁷": "7", "⁸": "8", "⁹": "9",
+    "⁺": "+", "⁻": "-", "·": ".", "⋅": ".", "﹣": "-", "－": "-",
+})
+_SUBSCRIPT_MAP = str.maketrans({
+    "₀": "0", "₁": "1", "₂": "2", "₃": "3", "₄": "4",
+    "₅": "5", "₆": "6", "₇": "7", "₈": "8", "₉": "9",
+    "₊": "+", "₋": "-", "․": ".", "₋": "-",
+})
 
 
 def normalize_raw_text(raw_text: str) -> str:
@@ -32,9 +47,15 @@ def normalize_raw_text(raw_text: str) -> str:
     can be compared and de-duplicated.
     """
     text = raw_text.strip()
+    text = text.translate(_SUPERSCRIPT_MAP).translate(_SUBSCRIPT_MAP)
+    # Some vision models answer in LaTeX/markdown math ("2X $\\phi$12").
+    # Fold those back to the plain symbols a drawing actually prints.
+    text = re.sub(r"\$?\\[Pp]hi\$?", "Φ", text)
+    text = re.sub(r"\$?\\[Dd]iameter\$?", "Φ", text)
+    text = text.replace("$", "")
     text = _DIAMETER_RE.sub(lambda m: m.group(0), text)  # keep symbol as-is
     text = re.sub(r"\s*±\s*", " ±", text)              # "± 0.025" -> "±0.025"
-    text = re.sub(r"\s*([ΦφØ⌀°˚])\s*", r"\1", text)      # "Φ 3.5" -> "Φ3.5"
+    text = re.sub(r"\s*([ΦφØ⌀∅ø°˚])\s*", r"\1", text)  # "Φ 3.5" -> "Φ3.5"
     text = re.sub(r"\s*[Xx×]\s*", "X", text)             # "4 X 10" -> "4X10"
     text = re.sub(r"\s+", " ", text).strip()
     return text
@@ -94,7 +115,15 @@ def parse_raw_text(raw_text: str) -> dict:
         result["tolerance"] = plus if abs(plus) >= abs(minus) else abs(minus)
         text = text[: asym.start()] + " " + text[asym.end():]
     else:
-        tol = _SYMMETRIC_TOL_RE.search(text)
+        stacked = _STACKED_TOL_RE.search(text)
+        if stacked:
+            plus = float(stacked.group(1))
+            minus = -float(stacked.group(2))
+            result["tolerance_plus"] = plus
+            result["tolerance_minus"] = minus
+            result["tolerance"] = plus
+            text = text[: stacked.start()] + " " + text[stacked.end():]
+        tol = None if stacked else _SYMMETRIC_TOL_RE.search(text)
         if tol:
             value = float(tol.group(1))
             result["tolerance"] = value

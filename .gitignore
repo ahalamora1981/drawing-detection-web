@@ -24,7 +24,7 @@ __pycache__/
 
 # user uploads + per-run detection artifacts
 uploads/
-output/test_results/
+output/
 
 # typescript
 *.tsbuildinfo

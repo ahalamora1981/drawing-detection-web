@@ -32,7 +32,9 @@ export interface UploadMeta {
 }
 
 const UPLOADS_DIR = path.join(process.cwd(), "uploads");
-const TTL_MS = Number(process.env.UPLOAD_TTL_MS ?? 60 * 60 * 1000); // 1 hour
+// 24h: long enough that a visitor can come back to their uploads during a
+// demo day. Runs use the same horizon so links never dangle.
+const TTL_MS = Number(process.env.UPLOAD_TTL_MS ?? 24 * 60 * 60 * 1000);
 const MAX_UPLOADS_PER_SESSION = 5;
 const SWEEP_INTERVAL_MS = 10 * 60 * 1000; // 10 minutes
 
@@ -164,6 +166,21 @@ export function findUpload(storageName: string): UploadMeta | null {
 
 export function getUploadsDir(): string {
   return UPLOADS_DIR;
+}
+
+/** Remove one upload of a session (file + metadata). */
+export function removeUpload(session: string, storageName: string): boolean {
+  const list = store.get(session) ?? [];
+  const idx = list.findIndex((m) => m.storageName === storageName);
+  if (idx === -1) return false;
+  list.splice(idx, 1);
+  store.set(session, list);
+  try {
+    fs.unlinkSync(path.join(UPLOADS_DIR, storageName));
+  } catch {
+    // already gone
+  }
+  return true;
 }
 
 export function getMaxUploads(): number {

@@ -1,7 +1,7 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  basePath: "/dfm-demo",
+  basePath: "/cisco-demo",
 };
 
 export default nextConfig;

@@ -1,859 +1,351 @@
 "use client";
 
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
 import Header from "@/components/Header";
-import ImageSelector from "@/components/ImageSelector";
-import ImageComparison from "@/components/ImageComparison";
-import DimensionTable from "@/components/DimensionTable";
-import { withBasePath } from "@/lib/basePath";
-import type { TestImage, DetectionResult } from "@/lib/types";
+import { apiFetch } from "@/lib/api";
+import { getSessionId } from "@/lib/session";
+import type { GalleryImage, RunSummary } from "@/lib/types";
 
-// The whole app is gated by a PIN. The PIN is checked SERVER-SIDE
-// (APP_PIN in .env): the client validates it once per page load via
-// /api/verify-pin and keeps the result in memory only, so every page
-// refresh shows the PIN pop-up again.
-//
-// Feature flag: set to true to re-enable the PIN gate pop-up.
-const PIN_VERIFICATION_ENABLED = false;
+const MAX_UPLOADS = 5;
 
-// Display name for an LLM channel (1 = local STG server, 2 = SaaS API).
-const channelName = (ch: number) => (ch === 2 ? "LLM（SaaS）" : "LLM（本地）");
-
-export default function Home() {
-  const [images, setImages] = useState<TestImage[]>([]);
-  const [selectedIndex, setSelectedIndex] = useState(0);
-  // Default to the SaaS API; the user can switch to the local server in
-  // the sidebar selector.
-  const [channel, setChannel] = useState<number>(2);
-  // App-wide PIN gate: verified once per page load via /api/verify-pin.
-  // The result lives only in memory, so every page refresh shows the
-  // PIN pop-up again. Wrong/cancelled PIN keeps the gate closed.
-  const [unlocked, setUnlocked] = useState(false);
-  const [pinInput, setPinInput] = useState("");
-  const [pinError, setPinError] = useState<string | null>(null);
-  const [verifying, setVerifying] = useState(false);
-  const [loading, setLoading] = useState(true);
-  const [detecting, setDetecting] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  // Shown when the backend automatically failed over to the other LLM
-  // channel because the selected one was too slow.
-  const [channelNote, setChannelNote] = useState<string | null>(null);
-
-  // Live timer value (0.1s precision) while a detection is running.
-  const [elapsed, setElapsed] = useState(0);
-
-  // Final detection time recorded per sample (filename -> seconds). Each
-  // sample keeps its own timer: switching samples never wipes another
-  // sample's recorded time. A page refresh clears everything.
-  const [timings, setTimings] = useState<Record<string, number>>({});
-
-  // Filename currently being detected (survives sample switches mid-run).
-  const [detectingFilename, setDetectingFilename] = useState<string | null>(null);
-
-  const timerStartRef = useRef<number | null>(null);
-
-  // Session id lives only in JS memory (no cookie/localStorage), so a page
-  // refresh starts a fresh session and clears the user's uploads from view.
-  const sessionRef = useRef<string | null>(null);
-  if (!sessionRef.current) {
-    sessionRef.current =
-      typeof crypto !== "undefined" && crypto.randomUUID
-        ? crypto.randomUUID()
-        : `s-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+function statusOf(run: RunSummary | null): { text: string; color: string } {
+  if (!run) return { text: "未检测", color: "var(--color-muted-soft)" };
+  switch (run.stage) {
+    case "queued":
+      return { text: "排队中", color: "var(--color-muted)" };
+    case "locating":
+      return { text: "正在定位…", color: "var(--color-primary)" };
+    case "located":
+      return { text: `已定位 ${run.boxCount} 处`, color: "var(--color-body)" };
+    case "reading":
+      return {
+        text: `识别中 ${run.detectedCount}/${run.boxCount}`,
+        color: "var(--color-primary)",
+      };
+    case "done":
+      return {
+        text:
+          run.reviewCount > 0
+            ? `已识别 ${run.detectedCount} 条 · ${run.reviewCount} 待复核`
+            : `已识别 ${run.detectedCount} 条`,
+        color: run.reviewCount > 0 ? "var(--color-warning)" : "var(--color-success)",
+      };
+    case "error":
+      return { text: "上次运行失败 · 可重试", color: "var(--color-error)" };
+    default:
+      return { text: "未检测", color: "var(--color-muted-soft)" };
   }
+}
 
-  const uploadedCount =
-    images.filter((img) => img.source === "upload").length;
+export default function GalleryPage() {
+  const router = useRouter();
+  const [session, setSession] = useState("");
+  const [tests, setTests] = useState<GalleryImage[]>([]);
+  const [uploads, setUploads] = useState<GalleryImage[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [busy, setBusy] = useState(false);
+  const [dragOver, setDragOver] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // Channel switch handler: both channels are freely selectable now (the
-  // PIN gate protects the whole page, not a single channel).
-  const handleChannelChange = useCallback((value: number) => {
-    setChannel(value);
+  useEffect(() => {
+    setSession(getSessionId());
   }, []);
 
-  const submitPin = async () => {
-    const entered = pinInput.trim();
-    if (!entered) {
-      setPinError("请输入 PIN。");
-      return;
-    }
-    setVerifying(true);
-    setPinError(null);
+  const load = useCallback(async (sid: string) => {
     try {
-      const res = await fetch(withBasePath("/api/verify-pin"), {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ pin: entered }),
-      });
+      const res = await apiFetch(
+        `/api/images?session=${encodeURIComponent(sid)}`
+      );
+      if (!res.ok) throw new Error("无法加载图纸列表。");
       const data = await res.json();
-      if (!res.ok || !data.ok) {
-        throw new Error(data.error || "PIN 错误。");
-      }
-      // Success is memory-only: a page refresh re-arms the gate.
-      setUnlocked(true);
-      setPinInput("");
-      setPinError(null);
+      setTests(data.images ?? []);
+      setUploads(data.uploads ?? []);
     } catch (err) {
-      // Wrong PIN: keep the gate closed, allow retry.
-      setPinError(err instanceof Error ? err.message : "PIN 错误。");
-      setPinInput("");
+      setError(err instanceof Error ? err.message : "加载失败");
     } finally {
-      setVerifying(false);
+      setLoading(false);
     }
-  };
+  }, []);
 
-  // Upload a single image (click-to-browse or drag & drop).
-  const handleUpload = useCallback(
+  useEffect(() => {
+    if (!session) return;
+    load(session);
+  }, [session, load]);
+
+  const uploadsFull = uploads.length >= MAX_UPLOADS;
+
+  const upload = useCallback(
     async (file: File) => {
-      if (!file) return;
+      if (!file || !session) return;
       const isPng = file.type === "image/png";
       const isJpg = file.type === "image/jpeg";
       if (!isPng && !isJpg) {
-        setError("Only PNG and JPG images are allowed.");
+        setError("只支持 PNG 和 JPG 图纸。");
         return;
       }
       if (file.size > 10 * 1024 * 1024) {
-        setError("Image must be 10 MB or smaller.");
+        setError("单张图纸不能超过 10 MB。");
         return;
       }
-      if (uploadedCount >= 5) {
-        setError(
-          "Maximum 5 uploads per session. Refresh the page to upload more."
-        );
+      if (uploadsFull) {
+        setError(`本次会话最多上传 ${MAX_UPLOADS} 张，刷新页面可重新开始。`);
         return;
       }
-
       setError(null);
-      const form = new FormData();
-      form.append("file", file);
-      form.append("session", sessionRef.current!);
-
+      setBusy(true);
       try {
-        const res = await fetch(withBasePath("/api/upload"), {
+        const form = new FormData();
+        form.append("file", file);
+        form.append("session", session);
+        const res = await apiFetch("/api/upload", {
           method: "POST",
           body: form,
         });
         const data = await res.json();
-        if (!res.ok) {
-          throw new Error(data.error || "Upload failed");
-        }
-        // Append the new image and auto-select it.
-        setImages((prev) => {
-          const updated = [...prev, data.image];
-          setSelectedIndex(updated.length - 1);
-          return updated;
-        });
+        if (!res.ok) throw new Error(data.error || "上传失败");
+        await load(session);
       } catch (err) {
-        setError(err instanceof Error ? err.message : "Upload failed");
+        setError(err instanceof Error ? err.message : "上传失败");
+      } finally {
+        setBusy(false);
       }
     },
-    [uploadedCount]
+    [session, uploadsFull, load]
   );
 
-  // Tick the live timer while a detection is running; stopped on completion.
-  useEffect(() => {
-    if (!detecting) return;
-    const start = Date.now();
-    timerStartRef.current = start;
-    const interval = setInterval(() => {
-      setElapsed((Date.now() - start) / 1000);
-    }, 100);
-    return () => {
-      clearInterval(interval);
-      timerStartRef.current = null;
-    };
-  }, [detecting]);
-
-  // Fetch image list on mount
-  useEffect(() => {
-    async function fetchImages() {
+  const removeUpload = useCallback(
+    async (filename: string) => {
+      if (!session) return;
+      setError(null);
       try {
-        const res = await fetch(
-          withBasePath(`/api/images?session=${sessionRef.current}`)
+        const res = await apiFetch(
+          `/api/upload?name=${encodeURIComponent(filename)}&session=${encodeURIComponent(session)}`,
+          { method: "DELETE" }
         );
-        if (!res.ok) throw new Error("Failed to load images");
-        const data = await res.json();
-        setImages(data.images);
+        if (!res.ok) {
+          const data = await res.json();
+          throw new Error(data.error || "删除失败");
+        }
+        await load(session);
       } catch (err) {
-        setError(err instanceof Error ? err.message : "Failed to load images");
-      } finally {
-        setLoading(false);
+        setError(err instanceof Error ? err.message : "删除失败");
       }
-    }
-    fetchImages();
-  }, []);
-
-  const selectedImage = images[selectedIndex];
-  const result: DetectionResult | null = selectedImage?.result ?? null;
-
-  // Show the live ticking timer only for the sample currently being detected;
-  // otherwise show that sample's last recorded detection time.
-  const isDetectingThisSample =
-    detecting && !!selectedImage && detectingFilename === selectedImage.filename;
-  const displayElapsed = isDetectingThisSample
-    ? elapsed
-    : selectedImage
-      ? (timings[selectedImage.filename] ?? 0)
-      : 0;
-
-  // Run detection on current image
-  const runDetection = useCallback(async () => {
-    if (!selectedImage) return;
-    // Capture the target now so the elapsed time is recorded on this sample
-    // even if the user switches to another sample while detection runs.
-    const targetFilename = selectedImage.filename;
-    setDetecting(true);
-    setDetectingFilename(targetFilename);
-    setElapsed(0);
-    setError(null);
-    setChannelNote(null);
-
-    try {
-      const res = await fetch(withBasePath("/api/detect"), {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          filename: targetFilename,
-          channel,
-        }),
-      });
-
-      if (!res.ok) {
-        const data = await res.json();
-        throw new Error(data.error || "Detection failed");
-      }
-
-      const data = await res.json();
-
-      if (
-        typeof data.channelUsed === "number" &&
-        data.channelUsed !== channel
-      ) {
-        setChannelNote(
-          `已自动切换到 ${channelName(data.channelUsed)}（所选通道响应过慢）。`
-        );
-      } else {
-        setChannelNote(null);
-      }
-
-      // Cache-bust: ensure the annotated image URL changes so the browser
-      // fetches the freshly drawn bounding boxes instead of a cached copy.
-      const baseUrl =
-        data.annotatedUrl ||
-        withBasePath(`/api/annotated?name=${encodeURIComponent(selectedImage.filename)}`);
-      const freshAnnotatedUrl = `${baseUrl}${baseUrl.includes("?") ? "&" : "?"}t=${Date.now()}`;
-
-      // Update the image data with new results
-      setImages((prev) => {
-        const updated = [...prev];
-        updated[selectedIndex] = {
-          ...updated[selectedIndex],
-          result: data.result,
-          annotatedUrl: freshAnnotatedUrl,
-        };
-        return updated;
-      });
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Detection failed");
-    } finally {
-      // Record the precise final elapsed time on this sample
-      const finalTime =
-        timerStartRef.current !== null
-          ? (Date.now() - timerStartRef.current) / 1000
-          : 0;
-      setTimings((prev) => ({ ...prev, [targetFilename]: finalTime }));
-      setDetectingFilename(null);
-      setDetecting(false);
-    }
-  }, [selectedImage, selectedIndex, channel]);
-
-  // App-wide PIN pop-up: shown on every page refresh until verified. The
-  // underlying app is inert while locked, so it cannot be interacted with.
-  const pinGate = (
-    <div
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="pin-dialog-title"
-      style={{
-        position: "fixed",
-        inset: 0,
-        backgroundColor: "rgba(20, 20, 19, 0.65)",
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        zIndex: 200,
-      }}
-    >
-      <div
-        style={{
-          width: 360,
-          maxWidth: "90vw",
-          backgroundColor: "var(--color-surface-card)",
-          borderRadius: 12,
-          border: "1px solid var(--color-hairline)",
-          padding: 24,
-          boxShadow: "0 16px 48px rgba(0, 0, 0, 0.2)",
-        }}
-      >
-        <h3
-          id="pin-dialog-title"
-          style={{
-            fontSize: 17,
-            fontWeight: 600,
-            color: "var(--color-ink)",
-            margin: "0 0 8px",
-          }}
-        >
-          PIN 验证
-        </h3>
-        <p
-          style={{
-            fontSize: 13,
-            color: "var(--color-muted)",
-            lineHeight: 1.6,
-            margin: "0 0 16px",
-          }}
-        >
-          该页面受 PIN 保护。请输入 PIN 解锁；每次刷新页面后需重新验证。
-        </p>
-        <input
-          type="password"
-          autoFocus
-          value={pinInput}
-          onChange={(e) => setPinInput(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter") submitPin();
-          }}
-          placeholder="请输入 PIN"
-          style={{
-            width: "100%",
-            boxSizing: "border-box",
-            padding: "10px 12px",
-            fontSize: 16,
-            letterSpacing: "0.2em",
-            color: "var(--color-ink)",
-            backgroundColor: "var(--color-canvas)",
-            border: `1px solid ${
-              pinError
-                ? "var(--color-error)"
-                : "var(--color-hairline-strong, var(--color-muted-soft))"
-            }`,
-            borderRadius: 8,
-            outline: "none",
-          }}
-        />
-        {pinError && (
-          <p
-            style={{
-              fontSize: 13,
-              color: "var(--color-error)",
-              margin: "8px 0 0",
-            }}
-          >
-            {pinError}
-          </p>
-        )}
-        <div
-          style={{
-            display: "flex",
-            justifyContent: "flex-end",
-            gap: 10,
-            marginTop: 20,
-          }}
-        >
-          <button
-            className="btn-primary"
-            onClick={submitPin}
-            disabled={verifying}
-          >
-            {verifying ? "验证中…" : "确认"}
-          </button>
-        </div>
-      </div>
-    </div>
+    },
+    [session, load]
   );
 
-  if (loading) {
-    return (
-      <>
-        <div style={{ height: "100vh", display: "flex", flexDirection: "column" }}>
-          <Header />
-        <div
-          style={{
-            flex: 1,
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            flexDirection: "column",
-            gap: 16,
-          }}
-        >
-          <div className="spinner" style={{ width: 32, height: 32 }} />
-          <span style={{ color: "var(--color-muted)", fontSize: 14 }}>
-            Loading test samples…
-          </span>
-        </div>
-      </div>
+  const open = useCallback(
+    (image: GalleryImage) => {
+      const query = image.run
+        ? `run=${encodeURIComponent(image.run.id)}`
+        : `image=${encodeURIComponent(image.filename)}`;
+      router.push(`/workspace?${query}`);
+    },
+    [router]
+  );
 
-      {/* App-wide PIN pop-up — shows on every page refresh. */}
-      {PIN_VERIFICATION_ENABLED && !unlocked && pinGate}
-      </>
-    );
-  }
+  const totalUploads = uploads.length;
+  const heroStats = useMemo(
+    () => `${tests.length} 张测试图纸 · ${totalUploads} 张本次上传`,
+    [tests.length, totalUploads]
+  );
 
   return (
-    <>
-      <div
-        style={{ height: "100vh", display: "flex", flexDirection: "column" }}
-        inert={PIN_VERIFICATION_ENABLED && !unlocked}
-      >
-        <Header />
+    <div style={{ minHeight: "100vh" }}>
+      <Header />
 
-      <div style={{ flex: 1, display: "flex", overflow: "hidden" }}>
-        {/* Sidebar */}
-        <ImageSelector
-          images={images}
-          selectedIndex={selectedIndex}
-          onSelect={setSelectedIndex}
-          onUpload={handleUpload}
-          channel={channel}
-          onChannelChange={handleChannelChange}
+      <div className="page">
+        <div className="hero">
+          <div>
+            <h1 className="hero-title font-display">图纸库</h1>
+            <p className="hero-sub">
+              先定位，再识别。系统先把图上的标注框出来，由你确认范围，再逐条读取数值、
+              公差与类型 —— 每一步都看得见，也都能改。
+            </p>
+          </div>
+          <div className="hero-flow">
+            <b>① 标注定位</b>
+            <span className="sep">——</span>
+            <b>② 内容识别</b>
+            <span className="sep">——</span>
+            <b>③ 复核导出</b>
+          </div>
+        </div>
+
+        {/* Upload */}
+        <div
+          className={`upload-zone${dragOver ? " upload-zone--over" : ""}${
+            uploadsFull ? " upload-zone--full" : ""
+          }`}
+          onClick={() => {
+            if (!uploadsFull && !busy) fileInputRef.current?.click();
+          }}
+          onDragOver={(e) => {
+            e.preventDefault();
+            if (!uploadsFull) setDragOver(true);
+          }}
+          onDragLeave={() => setDragOver(false)}
+          onDrop={(e) => {
+            e.preventDefault();
+            setDragOver(false);
+            const file = e.dataTransfer.files?.[0];
+            if (file) upload(file);
+          }}
+          role="button"
+          aria-disabled={uploadsFull}
+        >
+          <div className="upload-icon">
+            {busy ? (
+              <div className="spinner" style={{ width: 18, height: 18 }} />
+            ) : (
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
+                <path
+                  d="M12 16V4m0 0L7.5 8.5M12 4l4.5 4.5M4 16v2.5A1.5 1.5 0 0 0 5.5 20h13a1.5 1.5 0 0 0 1.5-1.5V16"
+                  stroke="var(--color-body)"
+                  strokeWidth="1.6"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+              </svg>
+            )}
+          </div>
+          <div style={{ flex: 1 }}>
+            <p className="upload-title">
+              {uploadsFull
+                ? `本次会话已上传 ${MAX_UPLOADS} 张`
+                : busy
+                  ? "正在上传…"
+                  : dragOver
+                    ? "松开即可上传"
+                    : "上传图纸"}
+            </p>
+            <p className="upload-copy">
+              {uploadsFull
+                ? "删除一张后可继续上传，刷新页面会重新开始。"
+                : "拖拽到这里，或点击选择文件 · PNG / JPG · 单张 ≤ 10 MB"}
+            </p>
+          </div>
+          <div className="section-count">
+            {uploads.length}/{MAX_UPLOADS}
+          </div>
+        </div>
+
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept=".png,.jpg,.jpeg,image/png,image/jpeg"
+          style={{ display: "none" }}
+          onChange={(e) => {
+            const file = e.target.files?.[0];
+            if (file) upload(file);
+            e.target.value = "";
+          }}
         />
 
-        {/* Main content */}
-        <main
-          style={{
-            flex: 1,
-            overflowY: "auto",
-            padding: 32,
-          }}
-        >
-          {selectedImage && (
-            <div className="animate-fade-in" key={selectedImage.filename}>
-              {/* Page title */}
-              <div
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "space-between",
-                  marginBottom: 24,
-                }}
-              >
-                <div>
-                  <h1
-                    className="font-display"
-                    style={{
-                      fontSize: 28,
-                      color: "var(--color-ink)",
-                      margin: 0,
-                      letterSpacing: "-0.3px",
-                    }}
-                  >
-                    {selectedImage.displayName}
-                  </h1>
-                  <p
-                    style={{
-                      fontSize: 14,
-                      color: "var(--color-muted)",
-                      margin: "4px 0 0",
-                    }}
-                  >
-                    {selectedImage.filename}
-                  </p>
-                </div>
+        {error && (
+          <div className="error-banner" style={{ marginTop: 14 }}>
+            {error}
+          </div>
+        )}
 
-                <div
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    gap: 24,
-                  }}
-                >
-                  {/* Timer + expected duration hint (left of the button) */}
-                  <div
-                    style={{
-                      display: "flex",
-                      flexDirection: "column",
-                      alignItems: "flex-end",
-                      gap: 4,
-                    }}
-                  >
-                    {/* Detection timer (0.1s precision) */}
-                    <div
-                      style={{
-                        display: "flex",
-                        alignItems: "center",
-                        gap: 8,
-                        fontFamily: '"JetBrains Mono", monospace',
-                        fontSize: 24,
-                        fontWeight: 500,
-                        letterSpacing: "-0.5px",
-                        lineHeight: 1,
-                        color: isDetectingThisSample
-                          ? "var(--color-primary)"
-                          : "var(--color-muted)",
-                      }}
-                    >
-                      <svg
-                        width="20"
-                        height="20"
-                        viewBox="0 0 16 16"
-                        fill="none"
-                      >
-                        <circle
-                          cx="8"
-                          cy="8"
-                          r="6.5"
-                          stroke="currentColor"
-                          strokeWidth="1.5"
-                        />
-                        <path
-                          d="M8 4.5V8l2.5 1.5"
-                          stroke="currentColor"
-                          strokeWidth="1.5"
-                          strokeLinecap="round"
-                        />
-                      </svg>
-                      {displayElapsed.toFixed(1)}s
-                    </div>
-
-                    {/* Expected duration hint */}
-                    <div
-                      style={{
-                        fontSize: 12,
-                        color: "var(--color-muted-soft)",
-                        whiteSpace: "nowrap",
-                      }}
-                    >
-                      Detection may take 10&ndash;20 seconds, it may take longer for the first run.
-                    </div>
-
-                    {/* Automatic channel failover note */}
-                    {channelNote && (
-                      <div
-                        style={{
-                          fontSize: 12,
-                          color: "var(--color-warning)",
-                          whiteSpace: "nowrap",
-                        }}
-                      >
-                        {channelNote}
-                      </div>
-                    )}
-                  </div>
-
-                  <button
-                    className="btn-primary"
-                    onClick={runDetection}
-                    disabled={detecting}
-                  >
-                    {detecting ? (
-                      <>
-                        <div className="spinner" style={{ width: 16, height: 16 }} />
-                        {`正在连接 ${channelName(channel)}…`}
-                      </>
-                    ) : (
-                      <>
-                        <svg
-                          width="16"
-                          height="16"
-                          viewBox="0 0 16 16"
-                          fill="none"
-                        >
-                          <path
-                            d="M8 2v12M2 8h12"
-                            stroke="currentColor"
-                            strokeWidth="2"
-                            strokeLinecap="round"
-                          />
-                        </svg>
-                        Run Detection
-                      </>
-                    )}
-                  </button>
-                </div>
-              </div>
-
-              {/* Error banner */}
-              {error && (
-                <div
-                  style={{
-                    backgroundColor: "rgba(198, 69, 69, 0.08)",
-                    border: "1px solid rgba(198, 69, 69, 0.2)",
-                    borderRadius: 8,
-                    padding: "12px 16px",
-                    marginBottom: 24,
-                    fontSize: 14,
-                    color: "var(--color-error)",
-                  }}
-                >
-                  {error}
-                </div>
-              )}
-
-              {/* Summary cards */}
-              {result && (
-                <div
-                  style={{
-                    display: "grid",
-                    gridTemplateColumns: "repeat(4, 1fr)",
-                    gap: 16,
-                    marginBottom: 24,
-                  }}
-                >
-                  <SummaryCard
-                    label="Dimensions Found"
-                    value={result.total_detected}
-                    color="var(--color-primary)"
-                  />
-                  <SummaryCard
-                    label="Needs Review"
-                    value={result.needs_review_count}
-                    color={
-                      result.needs_review_count > 0
-                        ? "var(--color-warning)"
-                        : "var(--color-success)"
-                    }
-                  />
-                  <SummaryCard
-                    label="Image Size"
-                    value={`${result.image_width}×${result.image_height}`}
-                    color="var(--color-muted)"
-                  />
-                  <SummaryCard
-                    label="Avg Confidence"
-                    value={
-                      result.dimensions.length > 0
-                        ? `${(
-                            (result.dimensions.reduce(
-                              (sum, d) => sum + d.confidence,
-                              0
-                            ) /
-                              result.dimensions.length) *
-                            100
-                          ).toFixed(0)}%`
-                        : "—"
-                    }
-                    color="var(--color-accent-teal)"
-                  />
-                </div>
-              )}
-
-              {/* Image comparison */}
-              <div
-                style={{
-                  backgroundColor: "var(--color-surface-card)",
-                  borderRadius: 12,
-                  padding: 24,
-                  marginBottom: 24,
-                }}
-              >
-                <ImageComparison
-                  originalUrl={selectedImage.fullUrl}
-                  annotatedUrl={selectedImage.annotatedUrl || selectedImage.fullUrl}
-                  imageName={selectedImage.displayName}
-                />
-              </div>
-
-              {/* Detection results */}
-              {result && (
-                <div
-                  style={{
-                    backgroundColor: "var(--color-surface-card)",
-                    borderRadius: 12,
-                    padding: 24,
-                  }}
-                >
-                  <div
-                    style={{
-                      display: "flex",
-                      alignItems: "center",
-                      justifyContent: "space-between",
-                      marginBottom: 16,
-                    }}
-                  >
-                    <h2
-                      style={{
-                        fontSize: 18,
-                        fontWeight: 500,
-                        color: "var(--color-ink)",
-                        margin: 0,
-                      }}
-                    >
-                      Detected Dimensions
-                    </h2>
-                    <div
-                      style={{
-                        display: "flex",
-                        gap: 12,
-                        fontSize: 12,
-                        color: "var(--color-muted)",
-                      }}
-                    >
-                      <span style={{ display: "flex", alignItems: "center", gap: 4 }}>
-                        <span
-                          style={{
-                            width: 8,
-                            height: 8,
-                            borderRadius: "50%",
-                            backgroundColor: "var(--dim-linear)",
-                          }}
-                        />
-                        Linear
-                      </span>
-                      <span style={{ display: "flex", alignItems: "center", gap: 4 }}>
-                        <span
-                          style={{
-                            width: 8,
-                            height: 8,
-                            borderRadius: "50%",
-                            backgroundColor: "var(--dim-diameter)",
-                          }}
-                        />
-                        Diameter
-                      </span>
-                      <span style={{ display: "flex", alignItems: "center", gap: 4 }}>
-                        <span
-                          style={{
-                            width: 8,
-                            height: 8,
-                            borderRadius: "50%",
-                            backgroundColor: "var(--dim-angle)",
-                          }}
-                        />
-                        Angle
-                      </span>
-                      <span style={{ display: "flex", alignItems: "center", gap: 4 }}>
-                        <span
-                          style={{
-                            width: 8,
-                            height: 8,
-                            borderRadius: "50%",
-                            backgroundColor: "var(--dim-radius)",
-                          }}
-                        />
-                        Radius
-                      </span>
-                    </div>
-                  </div>
-
-                  <DimensionTable dimensions={result.dimensions} />
-                </div>
-              )}
-
-              {/* Empty state */}
-              {!result && !detecting && (
-                <div
-                  style={{
-                    backgroundColor: "var(--color-surface-card)",
-                    borderRadius: 12,
-                    padding: 64,
-                    textAlign: "center",
-                  }}
-                >
-                  <div
-                    style={{
-                      width: 48,
-                      height: 48,
-                      borderRadius: "50%",
-                      backgroundColor: "var(--color-surface-soft)",
-                      display: "flex",
-                      alignItems: "center",
-                      justifyContent: "center",
-                      margin: "0 auto 16px",
-                    }}
-                  >
-                    <svg
-                      width="24"
-                      height="24"
-                      viewBox="0 0 24 24"
-                      fill="none"
-                    >
-                      <path
-                        d="M21 21l-5.197-5.197m0 0A7.5 7.5 0 105.196 5.196a7.5 7.5 0 0010.607 10.607z"
-                        stroke="var(--color-muted)"
-                        strokeWidth="2"
-                        strokeLinecap="round"
-                      />
-                    </svg>
-                  </div>
-                  <h3
-                    style={{
-                      fontSize: 16,
-                      fontWeight: 500,
-                      color: "var(--color-body-strong)",
-                      margin: "0 0 8px",
-                    }}
-                  >
-                    No detection results
-                  </h3>
-                  <p
-                    style={{
-                      fontSize: 14,
-                      color: "var(--color-muted)",
-                      margin: "0 0 20px",
-                    }}
-                  >
-                    Click &ldquo;Run Detection&rdquo; to analyze this drawing.
-                  </p>
-                  <button className="btn-primary" onClick={runDetection}>
-                    Run Detection
-                  </button>
-                </div>
-              )}
+        {/* Uploads */}
+        {uploads.length > 0 && (
+          <>
+            <div className="section-head">
+              <h2 className="section-title">本次上传</h2>
+              <span className="section-count">{uploads.length}</span>
+              <span className="section-rule" />
+              <span className="section-count" style={{ fontFamily: "Inter" }}>
+                仅本次会话可见
+              </span>
             </div>
-          )}
-        </main>
+            <div className="gallery-grid">
+              {uploads.map((image) => (
+                <DrawingCard
+                  key={image.filename}
+                  image={image}
+                  onOpen={open}
+                  onDelete={removeUpload}
+                />
+              ))}
+            </div>
+          </>
+        )}
+
+        {/* Tests */}
+        <div className="section-head">
+          <h2 className="section-title">测试图纸</h2>
+          <span className="section-count">{tests.length}</span>
+          <span className="section-rule" />
+          <span className="section-count" style={{ fontFamily: "Inter" }}>
+            {loading ? "加载中…" : heroStats}
+          </span>
+        </div>
+        <div className="gallery-grid">
+          {tests.map((image) => (
+            <DrawingCard key={image.filename} image={image} onOpen={open} />
+          ))}
+        </div>
       </div>
-
     </div>
-
-    {/* App-wide PIN pop-up — shows on every page refresh. */}
-    {PIN_VERIFICATION_ENABLED && !unlocked && pinGate}
-    </>
   );
 }
 
-// Summary card component
-function SummaryCard({
-  label,
-  value,
-  color,
+function DrawingCard({
+  image,
+  onOpen,
+  onDelete,
 }: {
-  label: string;
-  value: string | number;
-  color: string;
+  image: GalleryImage;
+  onOpen: (image: GalleryImage) => void;
+  onDelete?: (filename: string) => void;
 }) {
+  const status = statusOf(image.run);
   return (
     <div
-      style={{
-        backgroundColor: "var(--color-surface-card)",
-        borderRadius: 12,
-        padding: "16px 20px",
+      className="drawing-card"
+      onClick={() => onOpen(image)}
+      role="button"
+      tabIndex={0}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          onOpen(image);
+        }
       }}
     >
-      <div
-        style={{
-          fontSize: 12,
-          fontWeight: 500,
-          textTransform: "uppercase",
-          letterSpacing: "0.05em",
-          color: "var(--color-muted)",
-          marginBottom: 6,
-        }}
-      >
-        {label}
+      {image.source === "upload" && (
+        <span className="drawing-card__badge">本次会话</span>
+      )}
+      {onDelete && (
+        <button
+          className="drawing-card__delete"
+          title="删除这张图纸"
+          onClick={(e) => {
+            e.stopPropagation();
+            onDelete(image.filename);
+          }}
+        >
+          ×
+        </button>
+      )}
+      <div className="drawing-card__thumb">
+        <img src={image.thumbnailUrl} alt={image.displayName} />
       </div>
-      <div
-        style={{
-          fontSize: 28,
-          fontWeight: 400,
-          fontFamily: '"Cormorant Garamond", serif',
-          color,
-          letterSpacing: "-0.5px",
-        }}
-      >
-        {value}
+      <div className="drawing-card__body">
+        <div className="drawing-card__name">{image.displayName}</div>
+        <div className="drawing-card__file">
+          {image.originalName ?? image.filename}
+        </div>
+        <div className="drawing-card__status">
+          <span className="dot" style={{ backgroundColor: status.color }} />
+          <span>{status.text}</span>
+          <span style={{ marginLeft: "auto", color: "var(--color-muted-soft)" }}>
+            {image.run ? "继续 →" : "开始 →"}
+          </span>
+        </div>
       </div>
     </div>
   );
