@@ -934,14 +934,19 @@ body {
   background-image: linear-gradient(rgba(230, 223, 216, 0.55) 1px, transparent 1px),
     linear-gradient(90deg, rgba(230, 223, 216, 0.55) 1px, transparent 1px);
   background-size: 24px 24px;
+  /* Centering MUST be done with margin:auto on the child, not with
+     justify-content/align-items: flex centering makes the overflow on the
+     top/left unreachable once the image is larger than the viewport, so
+     zoomed-in drawings appeared "cut off" no matter how you scrolled. */
   display: flex;
-  align-items: center;
-  justify-content: center;
 }
 
 .canvas-fit {
   position: relative;
   flex-shrink: 0;
+  /* auto margins center the drawing when it fits, and collapse to 0 when it
+     does not — which keeps every edge reachable by scrolling. */
+  margin: auto;
 }
 
 .canvas-fit img {
@@ -1377,11 +1382,6 @@ body {
   }
 }
 
-/* With a result table below, give the canvas less height so both fit. */
-.canvas-panel--compact .canvas-scroll {
-  height: clamp(280px, calc(100vh - 500px), 600px);
-}
-
 /* Phone layout: the workbench top bar needs to wrap, not squeeze. */
 @media (max-width: 768px) {
   .ws-topbar {
@@ -1425,8 +1425,7 @@ body {
   .step-line {
     width: 10px;
   }
-  .canvas-scroll,
-  .canvas-panel--compact .canvas-scroll {
+  .canvas-scroll {
     height: 44vh;
   }
   .ws-rail {

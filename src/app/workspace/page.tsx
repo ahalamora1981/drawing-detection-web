@@ -387,9 +387,7 @@ function WorkspaceInner() {
 
       <div className="ws-body">
         <div className="ws-main">
-          <div
-            className={`canvas-panel${dimensions.length > 0 ? " canvas-panel--compact" : ""}`}
-          >
+          <div className="canvas-panel">
             <div className="canvas-toolbar">
               <div className="segmented">
                 <button

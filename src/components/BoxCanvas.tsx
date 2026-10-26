@@ -82,6 +82,15 @@ export default function BoxCanvas({
   const dispW = Math.max(1, Math.round(imgW * scale));
   const dispH = Math.max(1, Math.round(imgH * scale));
 
+  // After a zoom change, keep the middle of the drawing in view instead of
+  // jumping to the top-left corner.
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    el.scrollLeft = (el.scrollWidth - el.clientWidth) / 2;
+    el.scrollTop = (el.scrollHeight - el.clientHeight) / 2;
+  }, [zoom, dispW, dispH]);
+
   const dimById = new Map(dimensions.map((d) => [d.item_id, d]));
 
   const toImageCoords = (clientX: number, clientY: number) => {
