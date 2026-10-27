@@ -122,7 +122,6 @@ output/runs/<runId>/                run.json / locate.json / read.json
 ```jsonc
 {
   "scope": "dimensions" | "all_text",          // 仅尺寸标注 / 含技术要求
-  "granularity": "annotation" | "value",       // 整条标注 / 单个数值
   "density": "conservative" | "standard" | "aggressive",
   "excludeTitleBlock": true
 }
@@ -244,6 +243,7 @@ systemctl reload caddy
 
 ## 七、运行机制与保护
 
+- **一框一条标注**：定位阶段固定按"整条标注"框（数值 + 公差 + 单位同框），因为拆开会让第二步失去上下文。
 - **两步各一次模型调用**：定位是整图一次（输出只要坐标，快）；识别是每个框一次小图调用（可并发），因此总耗时与原来的一体化抽取相当，但过程可见。
 - **人工确认的框就是最终范围**：识别阶段不再做"事后位置校正"，少一类奇怪错误，也更快。
 - **串行队列**：同时只跑 1 个任务，最多 2 个等待，第 3 个提示稍后再试。避免多标签页把网关配额打爆。

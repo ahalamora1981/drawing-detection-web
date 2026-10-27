@@ -33,7 +33,6 @@ export interface RunBox {
 /** User-facing locate options. Each one actually changes the request sent to the model. */
 export interface RunConfig {
   scope: "dimensions" | "all_text";
-  granularity: "annotation" | "value";
   density: "conservative" | "standard" | "aggressive";
   excludeTitleBlock: boolean;
 }

@@ -17,7 +17,7 @@ progress and serve the result without holding a long HTTP request open.
 Usage:
     python -m drawing_detection.stage_cli locate \
         --image drawing.png --out run-dir --channel 2 \
-        --config '{"scope":"dimensions","granularity":"annotation","density":"standard"}'
+        --config '{"scope":"dimensions","density":"standard"}'
 
     python -m drawing_detection.stage_cli read \
         --image drawing.png --out run-dir --channel 2 --boxes-file boxes.json

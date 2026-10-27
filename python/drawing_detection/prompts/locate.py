@@ -14,6 +14,7 @@ For each annotation return one JSON object with exactly these two fields:
 
 Rules:
 - Scan the whole image: every corner, every edge, inside the part geometry, near arrows and leader lines, horizontal, vertical and rotated text.
+- One box per printed annotation: a value and its tolerance/unit stay in the SAME box (e.g. "4X Φ10 ±0.05" is one box).
 - Box the annotation exactly where it is printed; a box that encloses unrelated text (titles, notes, labels) is a wrong answer.
 - NEVER box titles, title blocks, part names, notes, prose, or the drawing border/frame. Text like "BASEPLATE - MM TEST" is a drawing title, not a dimension.
 - Do not invent annotations that are not printed.
@@ -42,17 +43,6 @@ _SCOPE_LINES = {
     ),
 }
 
-_GRANULARITY_LINES = {
-    "annotation": (
-        "Granularity: one box per printed annotation, so a value and its "
-        "tolerance/unit stay in the SAME box (e.g. \"4X Φ10 ±0.05\" is one box)."
-    ),
-    "value": (
-        "Granularity: one box per individual numeric value. Split \"4X Φ10 ±0.05\" "
-        "into separate boxes for the quantity/value and for the tolerance."
-    ),
-}
-
 _DENSITY_LINES = {
     "conservative": (
         "Density: be conservative. Only box annotations you are confident are "
@@ -75,7 +65,6 @@ def build_locate_prompt(config: dict | None) -> str:
     parts = [LOCATE_PROMPT]
     for key, table in (
         ("scope", _SCOPE_LINES),
-        ("granularity", _GRANULARITY_LINES),
         ("density", _DENSITY_LINES),
     ):
         line = table.get(str(cfg.get(key, "")).lower())

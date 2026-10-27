@@ -155,7 +155,6 @@ export async function locateJob(runId: string): Promise<void> {
 
   const config = JSON.stringify({
     scope: run.config.scope,
-    granularity: run.config.granularity,
     density: run.config.density,
     exclude_title_block: run.config.excludeTitleBlock,
     max_boxes: 40,

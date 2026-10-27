@@ -14,7 +14,6 @@ import type { RunConfig, RunState } from "@/lib/types";
 
 const DEFAULT_CONFIG: RunConfig = {
   scope: "dimensions",
-  granularity: "annotation",
   density: "standard",
   excludeTitleBlock: true,
 };
@@ -538,24 +537,6 @@ function WorkspaceInner() {
               >
                 <option value="dimensions">仅尺寸标注</option>
                 <option value="all_text">含技术要求与注释</option>
-              </select>
-            </div>
-
-            <div className="field">
-              <label htmlFor="granularity">框选粒度</label>
-              <select
-                id="granularity"
-                value={config.granularity}
-                disabled={busyStage}
-                onChange={(e) =>
-                  setConfig({
-                    ...config,
-                    granularity: e.target.value as RunConfig["granularity"],
-                  })
-                }
-              >
-                <option value="annotation">整条标注</option>
-                <option value="value">单个数值</option>
               </select>
             </div>
 

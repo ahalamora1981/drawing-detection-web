@@ -11,14 +11,12 @@ import type { RunConfig } from "@/lib/types";
 function normalizeConfig(raw: unknown): RunConfig {
   const cfg = (raw ?? {}) as Record<string, unknown>;
   const scope = cfg.scope === "all_text" ? "all_text" : "dimensions";
-  const granularity = cfg.granularity === "value" ? "value" : "annotation";
   const density =
     cfg.density === "conservative" || cfg.density === "aggressive"
       ? cfg.density
       : "standard";
   return {
     scope,
-    granularity,
     density,
     excludeTitleBlock: cfg.excludeTitleBlock === true,
   };
