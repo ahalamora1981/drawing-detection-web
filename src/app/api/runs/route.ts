@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { canAccept, maxWaiting, submit } from "@/lib/runQueue";
-import { createRun, getRun, updateRun } from "@/lib/runStore";
+import { createRun, getRun, invalidateAnnotated, updateRun } from "@/lib/runStore";
 import { locateJob, resolveImagePath } from "@/lib/detectJob";
 import { deriveDisplayName } from "@/lib/uploadUtils";
 import { findUpload } from "@/lib/uploadStore";
@@ -86,6 +86,7 @@ export async function POST(request: NextRequest) {
       channel,
     });
   } else {
+    invalidateAnnotated(run.id);
     updateRun(run.id, {
       config,
       channel,

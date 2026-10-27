@@ -366,6 +366,42 @@ def cmd_read(args: argparse.Namespace) -> int:
 
 
 # --------------------------------------------------------------------------- #
+# Export — render the annotated PNG from the stored result
+# --------------------------------------------------------------------------- #
+
+def cmd_export(args: argparse.Namespace) -> int:
+    """Draw the annotated PNG on demand from run.json.
+
+    Kept separate from the read stage so a download can never serve a stale
+    or missing file: the image is rendered from the exact dimensions the
+    table is showing.
+    """
+    image = Path(args.image)
+    out = Path(args.out)
+    data = json.loads(Path(args.run_json).read_text(encoding="utf-8"))
+    dims = data.get("dimensions") or []
+    if not dims:
+        print("ERROR: 没有可标注的识别结果。", file=sys.stderr)
+        return 5
+
+    with Image.open(image) as im:
+        width, height = im.size
+
+    result = DetectionResult(
+        image_path=str(image),
+        image_width=width,
+        image_height=height,
+        dimensions=dims,
+        total_detected=len(dims),
+        needs_review_count=sum(1 for d in dims if d.get("needs_review")),
+    )
+    out.mkdir(parents=True, exist_ok=True)
+    draw_bounding_boxes(image, result, out / "annotated.png")
+    print(json.dumps({"ok": True, "count": len(dims)}))
+    return 0
+
+
+# --------------------------------------------------------------------------- #
 # Entry point
 # --------------------------------------------------------------------------- #
 
@@ -386,6 +422,12 @@ def main(argv: list[str] | None = None) -> int:
     p_read.add_argument("--channel", type=int, default=2)
     p_read.add_argument("--boxes-file", required=True)
     p_read.set_defaults(func=cmd_read)
+
+    p_export = sub.add_parser("export", help="render the annotated PNG")
+    p_export.add_argument("--image", required=True)
+    p_export.add_argument("--out", required=True)
+    p_export.add_argument("--run-json", required=True)
+    p_export.set_defaults(func=cmd_export)
 
     args = parser.parse_args(argv)
     try:

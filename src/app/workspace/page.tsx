@@ -42,6 +42,7 @@ function WorkspaceInner() {
   const [hoveredId, setHoveredId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [exporting, setExporting] = useState(false);
   const initialized = useRef(false);
   const resultsRef = useRef<HTMLDivElement>(null);
 
@@ -301,6 +302,38 @@ function WorkspaceInner() {
     if (run.stage === "done") return "识别完成，可复核并导出。";
     return "上次运行失败，可重试。";
   })();
+
+  // Fetch the rendered PNG and save it as a blob: this way a server-side
+  // failure surfaces as a message instead of silently handing back the
+  // original drawing.
+  const downloadAnnotated = useCallback(async () => {
+    if (!run) return;
+    setExporting(true);
+    setError(null);
+    try {
+      const res = await apiFetch(`/api/runs/${run.id}/image?variant=annotated`);
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error || "标注图生成失败，请重试。");
+      }
+      const blob = await res.blob();
+      if (blob.size === 0) throw new Error("标注图内容为空，请重试。");
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `${(run.displayName || "drawing")
+        .toLowerCase()
+        .replace(/\s+/g, "-")}-annotated.png`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "标注图生成失败，请重试。");
+    } finally {
+      setExporting(false);
+    }
+  }, [run]);
 
   const exportCsv = () => {
     if (!run || dimensions.length === 0) return;
@@ -715,15 +748,20 @@ function WorkspaceInner() {
           {readDone && dimensions.length > 0 && (
             <div className="rail-card">
               <p className="rail-label">导出</p>
-              <a
+              <button
                 className="btn-secondary action-btn"
-                style={{ textDecoration: "none" }}
-                href={withBasePath(
-                  `/api/runs/${run!.id}/image?variant=annotated&download=1`
-                )}
+                onClick={downloadAnnotated}
+                disabled={exporting}
               >
-                下载标注图
-              </a>
+                {exporting ? (
+                  <>
+                    <div className="spinner" style={{ width: 14, height: 14 }} />
+                    正在生成…
+                  </>
+                ) : (
+                  "下载标注图"
+                )}
+              </button>
               <button
                 className="btn-secondary action-btn"
                 style={{ marginTop: 8 }}

@@ -174,8 +174,19 @@ export function updateRun(id: string, patch: Partial<RunState>): RunState | null
   return next;
 }
 
+/** Delete the cached annotated PNG so it can never describe older boxes. */
+export function invalidateAnnotated(id: string) {
+  try {
+    fs.rmSync(path.join(runDir(id), "annotated.png"), { force: true });
+  } catch {
+    // nothing to remove
+  }
+}
+
 export function setBoxes(id: string, boxes: RunBox[]): RunState | null {
-  // Editing boxes invalidates any values read from the previous boxes.
+  // Editing boxes invalidates any values read from the previous boxes, and
+  // the exported image drawn for those boxes.
+  invalidateAnnotated(id);
   return updateRun(id, {
     boxes,
     dimensions: [],

@@ -215,6 +215,40 @@ export async function locateJob(runId: string): Promise<void> {
 }
 
 // --------------------------------------------------------------------------- //
+// Export — render the annotated PNG from the stored result
+// --------------------------------------------------------------------------- //
+
+/**
+ * Re-render <runDir>/annotated.png from the run's current dimensions.
+ *
+ * Downloads call this every time instead of trusting a file that may be
+ * missing or stale: a missing file used to fall back to the clean original,
+ * which looked like "the download button gives me the drawing back".
+ */
+export async function exportAnnotated(runId: string): Promise<boolean> {
+  const run = getRun(runId);
+  if (!run || run.dimensions.length === 0) return false;
+
+  const resolved = resolveImagePath(run.filename);
+  if (!resolved) return false;
+
+  const out = runDir(runId);
+  const result = await runStageCli(
+    [
+      "export",
+      "--image",
+      resolved.imagePath,
+      "--out",
+      out,
+      "--run-json",
+      path.join(out, "run.json"),
+    ],
+    60_000
+  );
+  return result.code === 0 && fs.existsSync(path.join(out, "annotated.png"));
+}
+
+// --------------------------------------------------------------------------- //
 // Stage 2 — read
 // --------------------------------------------------------------------------- //
 

@@ -114,7 +114,7 @@ output/runs/<runId>/                run.json / locate.json / read.json
 | GET | `/api/runs/:id` | 运行状态（含队列位置、进度、已读出的部分结果） |
 | PATCH | `/api/runs/:id` | `{boxes:[{x,y,w,h}]}` → 保存用户确认后的框 |
 | POST | `/api/runs/:id/read` | 排队执行内容识别 |
-| GET | `/api/runs/:id/image?variant=annotated&download=1` | 标注图导出 |
+| GET | `/api/runs/:id/image?variant=annotated` | 标注图（每次请求按当前结果重新渲染；无结果时返回 409，不会回退成原图） |
 | GET/POST | `/api/verify-pin` | `GET` 返回是否需要 PIN；`POST {pin}` 校验并下发凭证 |
 
 `config` 字段（每一项都会真实改变发给模型的请求）：
@@ -249,6 +249,7 @@ systemctl reload caddy
 - **串行队列**：同时只跑 1 个任务，最多 2 个等待，第 3 个提示稍后再试。避免多标签页把网关配额打爆。
 - **PIN 双层保护**：界面弹窗 + 服务端 HttpOnly 凭证。计费类接口（创建运行、识别、上传、改框）都要求凭证，防止绕过前端直接调用。
 - **每会话配额**：默认 20 次新建检测，刷新页面重置。
+- **导出按需渲染**：下载标注图时用当前表格里的结果重新绘制，不依赖可能过期或缺失的缓存文件；生成失败会明确报错，而不是悄悄给回原图。
 - **自动清理**：运行记录与上传文件 24 小时过期；上传被删除或过期后，其运行记录一并清理。
 
 ---

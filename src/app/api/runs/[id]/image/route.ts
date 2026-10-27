@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import fs from "fs";
 import path from "path";
 import { getRun, runDir } from "@/lib/runStore";
-import { resolveImagePath } from "@/lib/detectJob";
+import { exportAnnotated, resolveImagePath } from "@/lib/detectJob";
 
 /**
  * Serve a run's images.
@@ -31,8 +31,23 @@ export async function GET(
 
   let file = resolved.imagePath;
   if (variant === "annotated") {
-    const annotated = path.join(runDir(id), "annotated.png");
-    if (fs.existsSync(annotated)) file = annotated;
+    // Always render from the run's current dimensions. A missing/stale file
+    // used to be silently replaced by the clean original, which is
+    // indistinguishable from "the button does nothing".
+    if (run.dimensions.length === 0) {
+      return NextResponse.json(
+        { error: "还没有识别结果，无法导出标注图。" },
+        { status: 409 }
+      );
+    }
+    const ok = await exportAnnotated(id);
+    if (!ok) {
+      return NextResponse.json(
+        { error: "标注图生成失败，请重试。" },
+        { status: 500 }
+      );
+    }
+    file = path.join(runDir(id), "annotated.png");
   }
 
   const ext = path.extname(file).toLowerCase();
