@@ -18,7 +18,10 @@ export async function GET(
   const { id } = await context.params;
   const run = getRun(id);
   if (!run) {
-    return NextResponse.json({ error: "Run not found" }, { status: 404 });
+    return NextResponse.json(
+      { error: "Run not found", code: "run_not_found" },
+      { status: 404 }
+    );
   }
 
   const variant = request.nextUrl.searchParams.get("variant") ?? "annotated";
@@ -26,7 +29,10 @@ export async function GET(
 
   const resolved = resolveImagePath(run.filename);
   if (!resolved) {
-    return NextResponse.json({ error: "Image not found" }, { status: 404 });
+    return NextResponse.json(
+      { error: "Image not found", code: "image_not_found" },
+      { status: 404 }
+    );
   }
 
   let file = resolved.imagePath;
@@ -36,14 +42,14 @@ export async function GET(
     // indistinguishable from "the button does nothing".
     if (run.dimensions.length === 0) {
       return NextResponse.json(
-        { error: "还没有识别结果，无法导出标注图。" },
+        { error: "还没有识别结果，无法导出标注图。", code: "no_results" },
         { status: 409 }
       );
     }
     const ok = await exportAnnotated(id);
     if (!ok) {
       return NextResponse.json(
-        { error: "标注图生成失败，请重试。" },
+        { error: "标注图生成失败，请重试。", code: "export_failed" },
         { status: 500 }
       );
     }

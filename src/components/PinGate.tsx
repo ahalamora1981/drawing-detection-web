@@ -1,8 +1,10 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { ApiError, readApiError } from "@/lib/api";
 import { withBasePath } from "@/lib/basePath";
 import { onPinRequired } from "@/lib/pinSignal";
+import { errorText, useI18n } from "@/lib/i18n";
 
 /**
  * App-wide PIN gate.
@@ -12,6 +14,7 @@ import { onPinRequired } from "@/lib/pinSignal";
  * demo is publicly reachable and every run spends real LLM credits.
  */
 export default function PinGate({ children }: { children: React.ReactNode }) {
+  const { t, lang, setLang } = useI18n();
   const [unlocked, setUnlocked] = useState(false);
   const [pin, setPin] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -44,7 +47,7 @@ export default function PinGate({ children }: { children: React.ReactNode }) {
   const submit = async () => {
     const entered = pin.trim();
     if (!entered) {
-      setError("请输入 PIN。");
+      setError(t("pin.empty"));
       return;
     }
     setVerifying(true);
@@ -55,12 +58,13 @@ export default function PinGate({ children }: { children: React.ReactNode }) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ pin: entered }),
       });
+      if (!res.ok) throw await readApiError(res);
       const data = await res.json();
-      if (!res.ok || !data.ok) throw new Error(data.error || "PIN 错误。");
+      if (!data.ok) throw new ApiError("pin_wrong", "");
       setUnlocked(true);
       setPin("");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "PIN 错误。");
+      setError(errorText(t, err as Error, "pin.wrong"));
       setPin("");
     } finally {
       setVerifying(false);
@@ -81,13 +85,11 @@ export default function PinGate({ children }: { children: React.ReactNode }) {
           className="pin-overlay"
         >
           <div className="pin-card">
-            <div className="pin-eyebrow">受保护演示</div>
+            <div className="pin-eyebrow">{t("pin.eyebrow")}</div>
             <h2 id="pin-title" className="pin-title font-display">
-              PIN 验证
+              {t("pin.title")}
             </h2>
-            <p className="pin-copy">
-              该演示每次运行都会调用视觉大模型。请输入 PIN 解锁，刷新页面后需重新验证。
-            </p>
+            <p className="pin-copy">{t("pin.copy")}</p>
             <input
               type="password"
               autoFocus
@@ -96,13 +98,31 @@ export default function PinGate({ children }: { children: React.ReactNode }) {
               onKeyDown={(e) => {
                 if (e.key === "Enter") submit();
               }}
-              placeholder="请输入 PIN"
+              placeholder={t("pin.placeholder")}
               className={`pin-input${error ? " pin-input--error" : ""}`}
             />
             {error && <p className="pin-error">{error}</p>}
             <div className="pin-actions">
+              <div className="lang-switch" role="group" aria-label={t("header.language")}>
+                <button
+                  type="button"
+                  aria-pressed={lang === "zh"}
+                  className={lang === "zh" ? "is-active" : ""}
+                  onClick={() => setLang("zh")}
+                >
+                  中文
+                </button>
+                <button
+                  type="button"
+                  aria-pressed={lang === "en"}
+                  className={lang === "en" ? "is-active" : ""}
+                  onClick={() => setLang("en")}
+                >
+                  EN
+                </button>
+              </div>
               <button className="btn-primary" onClick={submit} disabled={verifying}>
-                {verifying ? "验证中…" : "确认"}
+                {verifying ? t("pin.verifying") : t("pin.submit")}
               </button>
             </div>
           </div>

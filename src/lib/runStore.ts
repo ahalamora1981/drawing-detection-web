@@ -146,6 +146,7 @@ export function createRun(input: CreateRunInput): RunState {
     readMs: null,
     channelUsed: null,
     error: null,
+    errorCode: null,
     createdAt: now,
     updatedAt: now,
   };
@@ -194,6 +195,7 @@ export function setBoxes(id: string, boxes: RunBox[]): RunState | null {
     progress: { done: 0, total: 0 },
     stage: "located",
     error: null,
+    errorCode: null,
   });
 }
 

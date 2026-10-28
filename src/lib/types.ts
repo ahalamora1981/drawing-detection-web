@@ -19,6 +19,8 @@ export interface DetectedDimension {
   confidence: number;
   bbox: BoundingBox;
   needs_review: boolean;
+  /** True when the crop could not be read at all. */
+  read_failed?: boolean;
 }
 
 /** A box produced by the locate stage. Pixel coordinates on the original image. */
@@ -74,6 +76,8 @@ export interface RunState {
   readMs: number | null;
   channelUsed: number | null;
   error: string | null;
+  /** Stable code for the last failure, so the UI can localise it. */
+  errorCode: string | null;
   createdAt: number;
   updatedAt: number;
 }

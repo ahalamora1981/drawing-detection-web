@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { DIMENSION_COLORS } from "@/lib/constants";
+import { useI18n } from "@/lib/i18n";
 import type { DetectedDimension, RunBox } from "@/lib/types";
 
 interface BoxCanvasProps {
@@ -52,6 +53,7 @@ export default function BoxCanvas({
   onAdd,
   onDelete,
 }: BoxCanvasProps) {
+  const { t } = useI18n();
   const scrollRef = useRef<HTMLDivElement>(null);
   const fitRef = useRef<HTMLDivElement>(null);
   const [viewport, setViewport] = useState({ w: 0, h: 0 });
@@ -152,7 +154,7 @@ export default function BoxCanvas({
       >
         <img
           src={imageUrl}
-          alt="drawing"
+          alt={t("ws.canvas.alt")}
           draggable={false}
           onLoad={(e) => {
             const img = e.currentTarget;
@@ -199,7 +201,13 @@ export default function BoxCanvas({
                   borderWidth:
                     mode === "locate" ? (isSelected || isHovered ? 3 : 2) : isSelected || isHovered ? 2.5 : 1.5,
                 }}
-                title={dim ? `${dim.raw_text}` : `标注 ${index + 1}`}
+                title={
+                  dim
+                    ? dim.read_failed || dim.raw_text === "READ_FAILED"
+                      ? t("table.failed")
+                      : dim.raw_text
+                    : t("ws.canvas.boxTitle", { n: index + 1 })
+                }
                 onPointerDown={(e) => {
                   e.stopPropagation();
                   onSelect(box.id);
@@ -213,7 +221,7 @@ export default function BoxCanvas({
                 {isSelected && editable && (
                   <button
                     className="dbox__delete"
-                    title="删除这个框"
+                    title={t("ws.canvas.deleteBox")}
                     onPointerDown={(e) => {
                       e.stopPropagation();
                       e.preventDefault();

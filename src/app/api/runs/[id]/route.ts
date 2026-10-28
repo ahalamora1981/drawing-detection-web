@@ -11,7 +11,10 @@ export async function GET(
   const { id } = await context.params;
   const run = getRun(id);
   if (!run) {
-    return NextResponse.json({ error: "Run not found" }, { status: 404 });
+    return NextResponse.json(
+      { error: "Run not found", code: "run_not_found" },
+      { status: 404 }
+    );
   }
 
   // While a job is waiting in the queue, report its live position.
@@ -35,11 +38,14 @@ export async function PATCH(
   const { id } = await context.params;
   const run = getRun(id);
   if (!run) {
-    return NextResponse.json({ error: "Run not found" }, { status: 404 });
+    return NextResponse.json(
+      { error: "Run not found", code: "run_not_found" },
+      { status: 404 }
+    );
   }
   if (run.stage === "locating" || run.stage === "reading" || run.stage === "queued") {
     return NextResponse.json(
-      { error: "任务正在执行，请等待完成后再修改。" },
+      { error: "任务正在执行，请等待完成后再修改。", code: "busy" },
       { status: 409 }
     );
   }
@@ -48,10 +54,16 @@ export async function PATCH(
   try {
     body = await request.json();
   } catch {
-    return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
+    return NextResponse.json(
+      { error: "Invalid JSON body", code: "invalid_request" },
+      { status: 400 }
+    );
   }
   if (!Array.isArray(body.boxes)) {
-    return NextResponse.json({ error: "Missing boxes array" }, { status: 400 });
+    return NextResponse.json(
+      { error: "Missing boxes array", code: "invalid_request" },
+      { status: 400 }
+    );
   }
 
   const width = run.imageWidth || 100000;

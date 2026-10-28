@@ -528,7 +528,9 @@ body {
 
 .pin-actions {
   display: flex;
-  justify-content: flex-end;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
   margin-top: 20px;
 }
 
@@ -1443,4 +1445,37 @@ body {
   .results-card {
     padding: 14px;
   }
+}
+
+/* Language toggle in the header */
+.lang-switch {
+  display: inline-flex;
+  align-items: center;
+  background-color: var(--color-surface-soft);
+  border-radius: 7px;
+  padding: 2px;
+  gap: 2px;
+}
+
+.lang-switch button {
+  border: none;
+  background: transparent;
+  border-radius: 5px;
+  padding: 4px 9px;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.2;
+  color: var(--color-muted);
+  cursor: pointer;
+  transition: background-color 0.12s ease, color 0.12s ease;
+}
+
+.lang-switch button:hover {
+  color: var(--color-ink);
+}
+
+.lang-switch button.is-active {
+  background-color: var(--color-canvas);
+  color: var(--color-ink);
+  box-shadow: 0 1px 3px rgba(20, 20, 19, 0.1);
 }

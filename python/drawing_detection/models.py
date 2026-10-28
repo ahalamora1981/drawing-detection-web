@@ -78,6 +78,10 @@ class DetectedDimension(BaseModel):
     needs_review: bool = Field(
         default=False, description="Flag for human review if low confidence"
     )
+    read_failed: bool = Field(
+        default=False,
+        description="True when the crop could not be read at all (no text found)",
+    )
 
 
 class DetectionResult(BaseModel):

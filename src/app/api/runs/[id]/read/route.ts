@@ -17,22 +17,28 @@ export async function POST(
   const { id } = await context.params;
   const run = getRun(id);
   if (!run) {
-    return NextResponse.json({ error: "Run not found" }, { status: 404 });
+    return NextResponse.json(
+      { error: "Run not found", code: "run_not_found" },
+      { status: 404 }
+    );
   }
   if (run.stage === "locating" || run.stage === "reading" || run.stage === "queued") {
     return NextResponse.json(
-      { error: "任务正在执行，请稍候。" },
+      { error: "任务正在执行，请稍候。", code: "busy" },
       { status: 409 }
     );
   }
   if (run.boxes.length === 0) {
     return NextResponse.json(
-      { error: "还没有可识别的框，请先完成标注定位。" },
+      { error: "还没有可识别的框，请先完成标注定位。", code: "no_boxes" },
       { status: 400 }
     );
   }
   if (!canAccept()) {
-    return NextResponse.json({ error: BUSY_MESSAGE }, { status: 429 });
+    return NextResponse.json(
+      { error: BUSY_MESSAGE, code: "queue_full" },
+      { status: 429 }
+    );
   }
 
   const submitted = submit(id, () => readJob(id));
@@ -44,6 +50,7 @@ export async function POST(
     stage: position === 0 ? "reading" : run.stage,
     queue: position > 0 ? { position, step: "read" } : null,
     error: null,
+    errorCode: null,
   });
 
   return NextResponse.json({ run: updated ?? run });

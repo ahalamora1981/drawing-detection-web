@@ -247,6 +247,7 @@ def _placeholder_dimension(item_id: str, box: dict, reason: str):
     )
     dim.confidence = 0.2
     dim.needs_review = True
+    dim.read_failed = True
     # Don't dress a failed read up as a real linear dimension in mm.
     dim.nominal_value = 0.0
     dim.unit = Unit.UNKNOWN
@@ -322,7 +323,8 @@ def cmd_read(args: argparse.Namespace) -> int:
                 dim.needs_review = True
         else:
             progress["failed"].append(item_id)
-            dim = _placeholder_dimension(item_id, box, "读取失败 · 待复核")
+            # Language-neutral marker: the UI localises it.
+            dim = _placeholder_dimension(item_id, box, "READ_FAILED")
 
         progress["dimensions"].append(dim.model_dump(mode="json"))
         progress["done"] += 1

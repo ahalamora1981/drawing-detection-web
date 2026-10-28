@@ -29,7 +29,7 @@ export async function POST(request: NextRequest) {
 
   if (!expected) {
     return NextResponse.json(
-      { ok: false, error: "应用 PIN 未配置（APP_PIN 缺失）。" },
+      { ok: false, error: "应用 PIN 未配置（APP_PIN 缺失）。", code: "pin_config" },
       { status: 503 }
     );
   }
@@ -40,7 +40,7 @@ export async function POST(request: NextRequest) {
     return res;
   }
   return NextResponse.json(
-    { ok: false, error: "PIN 错误。" },
+    { ok: false, error: "PIN 错误。", code: "pin_wrong" },
     { status: 401 }
   );
 }

@@ -38,18 +38,25 @@ export async function POST(request: NextRequest) {
   try {
     body = await request.json();
   } catch {
-    return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
+    return NextResponse.json(
+      { error: "Invalid JSON body", code: "invalid_request" },
+      { status: 400 }
+    );
   }
 
   const session = (body.session ?? "").trim();
   const filename = (body.filename ?? "").trim();
-  if (!session) return NextResponse.json({ error: "Missing session" }, { status: 400 });
-  if (!filename) return NextResponse.json({ error: "Missing filename" }, { status: 400 });
+  if (!session || !filename) {
+    return NextResponse.json(
+      { error: "Missing session or filename", code: "invalid_request" },
+      { status: 400 }
+    );
+  }
 
   const resolved = resolveImagePath(filename);
   if (!resolved) {
     return NextResponse.json(
-      { error: "找不到这张图纸，可能已过期，请重新上传。" },
+      { error: "找不到这张图纸，可能已过期，请重新上传。", code: "image_not_found" },
       { status: 404 }
     );
   }
@@ -72,6 +79,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json(
         {
           error: `本次会话已达到 ${maxRunsPerSession()} 次检测上限，刷新页面可重新开始。`,
+          code: "quota",
         },
         { status: 429 }
       );
@@ -97,14 +105,23 @@ export async function POST(request: NextRequest) {
       locateMs: null,
       readMs: null,
       error: null,
+      errorCode: null,
       stage: "queued",
       queue: null,
     });
   }
 
   if (!canAccept()) {
-    updateRun(run.id, { stage: "error", queue: null, error: BUSY_MESSAGE });
-    return NextResponse.json({ error: BUSY_MESSAGE, runId: run.id }, { status: 429 });
+    updateRun(run.id, {
+      stage: "error",
+      queue: null,
+      error: BUSY_MESSAGE,
+      errorCode: "queue_full",
+    });
+    return NextResponse.json(
+      { error: BUSY_MESSAGE, code: "queue_full", runId: run.id },
+      { status: 429 }
+    );
   }
 
   const runId = run.id;
@@ -114,6 +131,7 @@ export async function POST(request: NextRequest) {
     stage: "queued",
     queue: position > 0 ? { position, step: "locate" } : null,
     error: null,
+    errorCode: null,
   });
 
   return NextResponse.json({ run: updated ?? run });

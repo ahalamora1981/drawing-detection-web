@@ -7,9 +7,10 @@ import BoxCanvas from "@/components/BoxCanvas";
 import DimensionTable from "@/components/DimensionTable";
 import StepBar, { type StepState } from "@/components/StepBar";
 import { withBasePath } from "@/lib/basePath";
-import { apiFetch } from "@/lib/api";
+import { apiFetch, ApiError, readApiError } from "@/lib/api";
 import { getSessionId } from "@/lib/session";
 import { DIMENSION_COLORS } from "@/lib/constants";
+import { errorText, useI18n, type Translate } from "@/lib/i18n";
 import type { RunConfig, RunState } from "@/lib/types";
 
 const DEFAULT_CONFIG: RunConfig = {
@@ -18,7 +19,11 @@ const DEFAULT_CONFIG: RunConfig = {
   excludeTitleBlock: true,
 };
 
-const CHANNEL_LABEL = (ch: number) => (ch === 1 ? "LLM（本地）" : "LLM（SaaS）");
+const channelLabel = (ch: number, t: Translate) =>
+  ch === 1 ? t("ws.settings.channel.local") : t("ws.settings.channel.saas");
+
+const channelShort = (ch: number, t: Translate) =>
+  ch === 1 ? t("ws.channel.short.local") : t("ws.channel.short.saas");
 
 function WorkspaceInner() {
   const router = useRouter();
@@ -26,6 +31,7 @@ function WorkspaceInner() {
   const runIdParam = search.get("run");
   const imageParam = search.get("image");
 
+  const { t } = useI18n();
   const [session, setSession] = useState("");
   const [run, setRun] = useState<RunState | null>(null);
   const [image, setImage] = useState<{
@@ -71,7 +77,7 @@ function WorkspaceInner() {
       try {
         if (runIdParam) {
           const res = await apiFetch(`/api/runs/${runIdParam}`);
-          if (!res.ok) throw new Error("找不到这次检测记录，可能已过期。");
+          if (!res.ok) throw await readApiError(res);
           const data = await res.json();
           if (cancelled) return;
           applyRun(data.run);
@@ -85,7 +91,7 @@ function WorkspaceInner() {
           const found = all.find(
             (item: { filename: string }) => item.filename === imageParam
           );
-          if (!found) throw new Error("找不到这张图纸，可能已过期，请回到图纸库重试。");
+          if (!found) throw new ApiError("image_not_found", "");
           if (found.run?.id) {
             router.replace(`/workspace?run=${encodeURIComponent(found.run.id)}`);
             return;
@@ -104,7 +110,7 @@ function WorkspaceInner() {
         }
         initialized.current = true;
       } catch (err) {
-        if (!cancelled) setError(err instanceof Error ? err.message : "加载失败");
+        if (!cancelled) setError(errorText(t, err as Error, "ws.error.load"));
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -180,7 +186,7 @@ function WorkspaceInner() {
       const data = await res.json();
       if (!res.ok) {
         if (data.run) applyRun(data.run);
-        throw new Error(data.error || "标注定位失败");
+        throw new ApiError(data.code, data.error);
       }
       applyRun(data.run);
       setSelectedId(null);
@@ -188,7 +194,7 @@ function WorkspaceInner() {
         router.replace(`/workspace?run=${encodeURIComponent(data.run.id)}`);
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : "标注定位失败");
+      setError(errorText(t, err as Error, "ws.error.locate"));
     }
   }, [image, session, config, channel, run, router, applyRun]);
 
@@ -200,11 +206,11 @@ function WorkspaceInner() {
         method: "POST",
       });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "内容识别失败");
+      if (!res.ok) throw new ApiError(data.code, data.error);
       setRun(data.run);
       setView("result");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "内容识别失败");
+      setError(errorText(t, err as Error, "ws.error.read"));
     }
   }, [run]);
 
@@ -218,10 +224,10 @@ function WorkspaceInner() {
           body: JSON.stringify({ boxes }),
         });
         const data = await res.json();
-        if (!res.ok) throw new Error(data.error || "保存框失败");
+        if (!res.ok) throw new ApiError(data.code, data.error);
         setRun(data.run);
       } catch (err) {
-        setError(err instanceof Error ? err.message : "保存框失败");
+        setError(errorText(t, err as Error, "ws.error.saveBoxes"));
       }
     },
     [run]
@@ -268,19 +274,19 @@ function WorkspaceInner() {
   const steps: StepState[] = useMemo(
     () => [
       {
-        label: "标注定位",
+        label: t("ws.step.locate"),
         state: located ? "done" : run?.stage === "locating" || run?.stage === "queued" ? "active" : "active",
       },
       {
-        label: "内容识别",
+        label: t("ws.step.read"),
         state: readDone ? "done" : located ? "active" : "todo",
       },
       {
-        label: "复核导出",
+        label: t("ws.step.review"),
         state: readDone ? "active" : "todo",
       },
     ],
-    [located, readDone, run?.stage]
+    [located, readDone, run?.stage, t]
   );
 
   const dimensions = run?.dimensions ?? [];
@@ -290,17 +296,21 @@ function WorkspaceInner() {
   const editable = !!run && !busyStage && !!image;
 
   const statusText = (() => {
-    if (!run) return "选择设置后点击「标注定位」。";
+    if (!run) return t("ws.status.idle");
     if (run.stage === "queued")
       return run.queue
-        ? `排队中 · 前面还有 ${run.queue.position} 个任务`
-        : "排队中…";
-    if (run.stage === "locating") return "正在定位标注，请稍候…";
+        ? t("ws.status.queued", { n: run.queue.position })
+        : t("ws.status.queuedShort");
+    if (run.stage === "locating") return t("ws.status.locating");
     if (run.stage === "reading")
-      return `正在逐条读取 ${run.progress.done}/${run.progress.total}`;
-    if (run.stage === "located") return `已框出 ${run.boxes.length} 处，可增删后再识别。`;
-    if (run.stage === "done") return "识别完成，可复核并导出。";
-    return "上次运行失败，可重试。";
+      return t("ws.status.reading", {
+        done: run.progress.done,
+        total: run.progress.total,
+      });
+    if (run.stage === "located")
+      return t("ws.status.located", { n: run.boxes.length });
+    if (run.stage === "done") return t("ws.status.done");
+    return t("ws.status.failed");
   })();
 
   // Fetch the rendered PNG and save it as a blob: this way a server-side
@@ -312,12 +322,9 @@ function WorkspaceInner() {
     setError(null);
     try {
       const res = await apiFetch(`/api/runs/${run.id}/image?variant=annotated`);
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
-        throw new Error(data.error || "标注图生成失败，请重试。");
-      }
+      if (!res.ok) throw await readApiError(res);
       const blob = await res.blob();
-      if (blob.size === 0) throw new Error("标注图内容为空，请重试。");
+      if (blob.size === 0) throw new ApiError("export_failed", "");
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
@@ -329,11 +336,11 @@ function WorkspaceInner() {
       a.remove();
       URL.revokeObjectURL(url);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "标注图生成失败，请重试。");
+      setError(errorText(t, err as Error, "ws.error.export"));
     } finally {
       setExporting(false);
     }
-  }, [run]);
+  }, [run, t]);
 
   const exportCsv = () => {
     if (!run || dimensions.length === 0) return;
@@ -381,7 +388,7 @@ function WorkspaceInner() {
       <div className="ws-shell">
         <div className="ws-topbar">
           <Link href="/" className="ws-back">
-            ← 图纸库
+            {t("ws.back")}
           </Link>
         </div>
         <div
@@ -396,7 +403,7 @@ function WorkspaceInner() {
           }}
         >
           <div className="spinner" />
-          正在加载…
+          {t("ws.loading")}
         </div>
       </div>
     );
@@ -406,10 +413,10 @@ function WorkspaceInner() {
     <div className="ws-shell">
       <div className="ws-topbar">
         <Link href="/" className="ws-back">
-          ← 图纸库
+          {t("ws.back")}
         </Link>
         <div style={{ display: "flex", flexDirection: "column", gap: 2, minWidth: 0 }}>
-          <h1 className="ws-title font-display">{image?.displayName ?? "图纸"}</h1>
+          <h1 className="ws-title font-display">{image?.displayName ?? t("ws.drawingFallback")}</h1>
           <span className="ws-file">
             {image?.originalName ?? image?.filename ?? ""}
           </span>
@@ -426,29 +433,29 @@ function WorkspaceInner() {
                   className={view === "original" ? "is-active" : ""}
                   onClick={() => setView("original")}
                 >
-                  原图
+                  {t("ws.view.original")}
                 </button>
                 <button
                   className={view === "locate" ? "is-active" : ""}
                   onClick={() => setView("locate")}
                   disabled={!run}
                 >
-                  定位框
+                  {t("ws.view.locate")}
                 </button>
                 <button
                   className={view === "result" ? "is-active" : ""}
                   onClick={() => setView("result")}
                   disabled={dimensions.length === 0}
                 >
-                  识别结果
+                  {t("ws.view.result")}
                 </button>
               </div>
 
               <span className="canvas-hint">
                 {editable
-                  ? "深蓝框＝候选位置 · 拖动空白处新增 · 选中后 Delete 删除"
+                  ? t("ws.canvas.hint")
                   : run?.stage === "reading"
-                    ? "正在读取，框会逐条上色"
+                    ? t("ws.canvas.reading")
                     : ""}
               </span>
 
@@ -494,19 +501,21 @@ function WorkspaceInner() {
           {dimensions.length > 0 ? (
             <div className="results-card" ref={resultsRef}>
               <div className="results-head">
-                <h2 className="results-title">识别结果</h2>
+                <h2 className="results-title">{t("ws.results.title")}</h2>
                 <span className="results-meta">
-                  {dimensions.length} 条 · {reviewCount} 条待复核
-                  {run?.readMs ? ` · 识别耗时 ${(run.readMs / 1000).toFixed(1)}s` : ""}
+                  {t("ws.results.meta", { n: dimensions.length, m: reviewCount })}
+                  {run?.readMs
+                    ? t("ws.results.metaTime", { s: (run.readMs / 1000).toFixed(1) })
+                    : ""}
                 </span>
                 <span style={{ flex: 1 }} />
                 <div className="legend-row" style={{ margin: 0 }}>
                   {(
                     [
-                      ["linear", "线性"],
-                      ["diameter", "直径"],
-                      ["angle", "角度"],
-                      ["radius", "半径"],
+                      ["linear", t("ws.legend.linear")],
+                      ["diameter", t("ws.legend.diameter")],
+                      ["angle", t("ws.legend.angle")],
+                      ["radius", t("ws.legend.radius")],
                     ] as const
                   ).map(([key, label]) => (
                     <span key={key} className="legend-item">
@@ -525,7 +534,7 @@ function WorkspaceInner() {
                         border: "1.5px dashed var(--dim-review)",
                       }}
                     />
-                    待复核
+                    {t("ws.legend.review")}
                   </span>
                 </div>
               </div>
@@ -541,12 +550,12 @@ function WorkspaceInner() {
             !busyStage && (
               <div className="empty-state">
                 <p className="empty-title">
-                  {run ? "还没有识别结果" : "这张图纸还没有开始"}
+                  {run ? t("ws.empty.noResult.title") : t("ws.empty.noRun.title")}
                 </p>
                 <p className="empty-copy">
                   {run
-                    ? "确认框的位置无误后，点击右侧「内容识别」，系统会逐条读取每个框里的数值。"
-                    : "点击右侧「标注定位」，系统会先把图上的尺寸标注框出来 —— 只框位置，不读数字。"}
+                    ? t("ws.empty.noResult.copy")
+                    : t("ws.empty.noRun.copy")}
                 </p>
               </div>
             )
@@ -556,10 +565,10 @@ function WorkspaceInner() {
         {/* Right rail */}
         <aside className="ws-rail">
           <div className="rail-card">
-            <p className="rail-label">检测设置</p>
+            <p className="rail-label">{t("ws.settings.title")}</p>
 
             <div className="field">
-              <label htmlFor="scope">识别范围</label>
+              <label htmlFor="scope">{t("ws.settings.scope")}</label>
               <select
                 id="scope"
                 value={config.scope}
@@ -568,13 +577,13 @@ function WorkspaceInner() {
                   setConfig({ ...config, scope: e.target.value as RunConfig["scope"] })
                 }
               >
-                <option value="dimensions">仅尺寸标注</option>
-                <option value="all_text">含技术要求与注释</option>
+                <option value="dimensions">{t("ws.settings.scope.dimensions")}</option>
+                <option value="all_text">{t("ws.settings.scope.all")}</option>
               </select>
             </div>
 
             <div className="field">
-              <label htmlFor="density">密集程度</label>
+              <label htmlFor="density">{t("ws.settings.density")}</label>
               <select
                 id="density"
                 value={config.density}
@@ -586,27 +595,27 @@ function WorkspaceInner() {
                   })
                 }
               >
-                <option value="conservative">保守（少框，少误报）</option>
-                <option value="standard">标准</option>
-                <option value="aggressive">激进（多框，少漏检）</option>
+                <option value="conservative">{t("ws.settings.density.conservative")}</option>
+                <option value="standard">{t("ws.settings.density.standard")}</option>
+                <option value="aggressive">{t("ws.settings.density.aggressive")}</option>
               </select>
             </div>
 
             <div className="field">
-              <label htmlFor="channel">AI 通道</label>
+              <label htmlFor="channel">{t("ws.settings.channel")}</label>
               <select
                 id="channel"
                 value={channel}
                 disabled={busyStage}
                 onChange={(e) => setChannel(Number(e.target.value))}
               >
-                <option value={2}>LLM（SaaS）· 默认</option>
-                <option value={1}>LLM（本地）</option>
+                <option value={2}>{t("ws.settings.channel.saas")}</option>
+                <option value={1}>{t("ws.settings.channel.local")}</option>
               </select>
             </div>
 
             <label className="switch-row">
-              <span>排除标题栏</span>
+              <span>{t("ws.settings.excludeTitle")}</span>
               <input
                 type="checkbox"
                 checked={config.excludeTitleBlock}
@@ -618,12 +627,12 @@ function WorkspaceInner() {
             </label>
 
             <p className="field-hint" style={{ marginTop: 8 }}>
-              修改设置后需要重新定位才会生效。
+              {t("ws.settings.note")}
             </p>
           </div>
 
           <div className="rail-card">
-            <p className="rail-label">执行</p>
+            <p className="rail-label">{t("ws.actions.title")}</p>
 
             <button
               className="btn-primary action-btn"
@@ -633,12 +642,12 @@ function WorkspaceInner() {
               {run?.stage === "locating" ? (
                 <>
                   <div className="spinner" style={{ width: 14, height: 14 }} />
-                  正在定位…
+                  {t("ws.actions.locating")}
                 </>
               ) : located ? (
-                "重新定位"
+                t("ws.actions.relocate")
               ) : (
-                "标注定位"
+                t("ws.actions.locate")
               )}
             </button>
 
@@ -651,12 +660,12 @@ function WorkspaceInner() {
               {run?.stage === "reading" ? (
                 <>
                   <div className="spinner" style={{ width: 14, height: 14 }} />
-                  正在识别…
+                  {t("ws.actions.reading")}
                 </>
               ) : readDone ? (
-                "重新识别"
+                t("ws.actions.reread")
               ) : (
-                "内容识别"
+                t("ws.actions.read")
               )}
             </button>
 
@@ -680,31 +689,31 @@ function WorkspaceInner() {
 
             {run?.error && (
               <div className="error-banner" style={{ marginTop: 10 }}>
-                {run.error}
+                {errorText(t, { code: run.errorCode, message: run.error })}
               </div>
             )}
           </div>
 
           {run && (
             <div className="rail-card">
-              <p className="rail-label">本次运行</p>
+              <p className="rail-label">{t("ws.metrics.title")}</p>
               <div className="metric-grid">
                 <div className="metric">
-                  <div className="metric__label">已框出</div>
+                  <div className="metric__label">{t("ws.metrics.boxes")}</div>
                   <div className="metric__value">
                     {run.boxes.length}
-                    <small>处</small>
+                    <small>{t("ws.metrics.unit.box")}</small>
                   </div>
                 </div>
                 <div className="metric">
-                  <div className="metric__label">已识别</div>
+                  <div className="metric__label">{t("ws.metrics.detected")}</div>
                   <div className="metric__value">
                     {dimensions.length}
-                    <small>条</small>
+                    <small>{t("ws.metrics.unit.dim")}</small>
                   </div>
                 </div>
                 <div className="metric">
-                  <div className="metric__label">待复核</div>
+                  <div className="metric__label">{t("ws.metrics.review")}</div>
                   <div
                     className="metric__value"
                     style={{
@@ -712,13 +721,13 @@ function WorkspaceInner() {
                     }}
                   >
                     {reviewCount}
-                    <small>条</small>
+                    <small>{t("ws.metrics.unit.dim")}</small>
                   </div>
                 </div>
                 <div className="metric">
-                  <div className="metric__label">通道</div>
+                  <div className="metric__label">{t("ws.metrics.channel")}</div>
                   <div className="metric__value" style={{ fontSize: 15, paddingTop: 6 }}>
-                    {run.channelUsed ? CHANNEL_LABEL(run.channelUsed) : CHANNEL_LABEL(run.channel)}
+                    {channelShort(run.channelUsed ?? run.channel, t)}
                   </div>
                 </div>
               </div>
@@ -733,10 +742,16 @@ function WorkspaceInner() {
                   color: "var(--color-muted)",
                 }}
               >
-                <span>定位 {run.locateMs ? `${(run.locateMs / 1000).toFixed(1)}s` : "—"}</span>
-                <span>识别 {run.readMs ? `${(run.readMs / 1000).toFixed(1)}s` : "—"}</span>
                 <span>
-                  合计{" "}
+                  {t("ws.metrics.locate")}{" "}
+                  {run.locateMs ? `${(run.locateMs / 1000).toFixed(1)}s` : "—"}
+                </span>
+                <span>
+                  {t("ws.metrics.read")}{" "}
+                  {run.readMs ? `${(run.readMs / 1000).toFixed(1)}s` : "—"}
+                </span>
+                <span>
+                  {t("ws.metrics.total")}{" "}
                   {run.locateMs || run.readMs
                     ? `${(((run.locateMs ?? 0) + (run.readMs ?? 0)) / 1000).toFixed(1)}s`
                     : "—"}
@@ -747,7 +762,7 @@ function WorkspaceInner() {
 
           {readDone && dimensions.length > 0 && (
             <div className="rail-card">
-              <p className="rail-label">导出</p>
+              <p className="rail-label">{t("ws.export.title")}</p>
               <button
                 className="btn-secondary action-btn"
                 onClick={downloadAnnotated}
@@ -756,10 +771,10 @@ function WorkspaceInner() {
                 {exporting ? (
                   <>
                     <div className="spinner" style={{ width: 14, height: 14 }} />
-                    正在生成…
+                    {t("ws.export.generating")}
                   </>
                 ) : (
-                  "下载标注图"
+                  t("ws.export.png")
                 )}
               </button>
               <button
@@ -767,7 +782,7 @@ function WorkspaceInner() {
                 style={{ marginTop: 8 }}
                 onClick={exportCsv}
               >
-                导出明细 CSV
+                {t("ws.export.csv")}
               </button>
             </div>
           )}
@@ -778,6 +793,7 @@ function WorkspaceInner() {
 }
 
 export default function WorkspacePage() {
+  const { t } = useI18n();
   return (
     <Suspense
       fallback={
@@ -791,7 +807,7 @@ export default function WorkspacePage() {
             color: "var(--color-muted)",
           }}
         >
-          <div className="spinner" /> 正在加载…
+          <div className="spinner" /> {t("ws.loading")}
         </div>
       }
     >

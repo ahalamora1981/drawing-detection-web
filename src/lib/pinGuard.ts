@@ -12,7 +12,7 @@ export function requirePin(request: NextRequest): NextResponse | null {
   if (!getProjectVar("APP_PIN")) return null;
   if (verifyToken(request.cookies.get(PIN_COOKIE)?.value)) return null;
   return NextResponse.json(
-    { error: "PIN 未验证，请刷新页面重新输入 PIN。" },
+    { error: "PIN 未验证，请刷新页面重新输入 PIN。", code: "pin_required" },
     { status: 401 }
   );
 }

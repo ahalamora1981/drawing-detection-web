@@ -18,3 +18,25 @@ export async function apiFetch(
   if (res.status === 401) requirePinAgain();
   return res;
 }
+
+/** Error carrying the server's stable `code` so the UI can localise it. */
+export class ApiError extends Error {
+  code?: string;
+
+  constructor(code: string | undefined, message: string) {
+    super(message);
+    this.name = "ApiError";
+    this.code = code;
+  }
+}
+
+/** Read a failed response body into an ApiError (never throws). */
+export async function readApiError(res: Response): Promise<ApiError> {
+  let data: { code?: string; error?: string } = {};
+  try {
+    data = await res.json();
+  } catch {
+    // non-JSON body (e.g. a proxy error page)
+  }
+  return new ApiError(data.code, data.error ?? "");
+}

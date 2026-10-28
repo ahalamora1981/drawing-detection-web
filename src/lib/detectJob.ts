@@ -43,27 +43,45 @@ export function resolveImagePath(
   return fs.existsSync(imagePath) ? { imagePath, source: "test" } : null;
 }
 
-/** Turn Python stderr into one human-readable line for the UI. */
-function friendlyError(stderr: string, code: number | null): string {
+/**
+ * Classify a Python failure into a stable code the UI can translate.
+ *
+ * The engine writes Chinese diagnostics to stderr; pattern-matching them is
+ * brittle, so the codes only distinguish the cases users can act on
+ * (retry / switch channel / fix config).
+ */
+function classifyError(
+  stderr: string,
+  code: number | null
+): { code: string; message: string } {
   const lines = stderr
     .split("\n")
     .map((l) => l.trim())
     .filter(Boolean);
+  const joined = lines.join(" ");
 
-  for (let i = lines.length - 1; i >= 0; i--) {
-    const line = lines[i];
-    if (/^ERROR:\s*/.test(line)) {
-      const msg = line.replace(/^ERROR:\s*/, "");
-      if (/LLM/i.test(msg)) return msg;
-      return msg.length > 160 ? `${msg.slice(0, 157)}…` : msg;
-    }
-    if (/LLM/i.test(line) && /(超时|不可用|timeout|unavailable|密钥|API key)/i.test(line)) {
-      return line;
-    }
+  const detail =
+    lines
+      .filter((l) => /^ERROR:\s*/.test(l))
+      .map((l) => l.replace(/^ERROR:\s*/, ""))
+      .pop() ?? "";
+
+  if (/超时|timeout|timed out/i.test(joined)) {
+    return { code: "llm_timeout", message: detail || "LLM call timed out" };
   }
-  if (code === 3) return "AI 通道暂时不可用，请稍后重试或切换通道。";
-  if (code === 4) return "识别引擎执行失败，请重试。";
-  return "识别失败，请稍后重试。";
+  if (/不可用|unavailable|连接失败|connection/i.test(joined)) {
+    return { code: "llm_unavailable", message: detail || "LLM channel unavailable" };
+  }
+  if (/API key|密钥|401|403|Unauthorized|BadRequest/i.test(joined)) {
+    return { code: "llm_config", message: detail || "LLM channel misconfigured" };
+  }
+  if (code === 3) {
+    return { code: "llm_unavailable", message: detail || "LLM channel unavailable" };
+  }
+  if (code === 5) {
+    return { code: "no_results", message: detail || "Nothing to annotate" };
+  }
+  return { code: "engine_failed", message: detail || "Detection engine failed" };
 }
 
 interface StageRun {
@@ -136,6 +154,7 @@ export async function locateJob(runId: string): Promise<void> {
       stage: "error",
       queue: null,
       error: "找不到这张图纸，可能已过期，请重新上传。",
+      errorCode: "image_not_found",
     });
     return;
   }
@@ -179,7 +198,8 @@ export async function locateJob(runId: string): Promise<void> {
     updateRun(runId, {
       stage: "error",
       queue: null,
-      error: friendlyError(result.stderr, result.code),
+      error: classifyError(result.stderr, result.code).message,
+      errorCode: classifyError(result.stderr, result.code).code,
     });
     return;
   }
@@ -197,6 +217,7 @@ export async function locateJob(runId: string): Promise<void> {
       stage: "error",
       queue: null,
       error: "定位结果读取失败，请重试。",
+      errorCode: "engine_failed",
     });
     return;
   }
@@ -205,6 +226,7 @@ export async function locateJob(runId: string): Promise<void> {
     stage: "located",
     queue: null,
     error: null,
+    errorCode: null,
     boxes: data.boxes ?? [],
     imageWidth: data.image_width,
     imageHeight: data.image_height,
@@ -261,6 +283,7 @@ export async function readJob(runId: string): Promise<void> {
       stage: "error",
       queue: null,
       error: "找不到这张图纸，可能已过期，请重新上传。",
+      errorCode: "image_not_found",
     });
     return;
   }
@@ -269,6 +292,7 @@ export async function readJob(runId: string): Promise<void> {
       stage: "error",
       queue: null,
       error: "还没有可识别的框，请先完成标注定位。",
+      errorCode: "no_boxes",
     });
     return;
   }
@@ -287,6 +311,7 @@ export async function readJob(runId: string): Promise<void> {
     stage: "reading",
     queue: null,
     error: null,
+    errorCode: null,
     dimensions: [],
     failed: [],
     progress: { done: 0, total: run.boxes.length },
@@ -334,7 +359,8 @@ export async function readJob(runId: string): Promise<void> {
     updateRun(runId, {
       stage: "error",
       queue: null,
-      error: friendlyError(result.stderr, result.code),
+      error: classifyError(result.stderr, result.code).message,
+      errorCode: classifyError(result.stderr, result.code).code,
       dimensions: progress?.dimensions ?? getRun(runId)?.dimensions ?? [],
       failed: progress?.failed ?? getRun(runId)?.failed ?? [],
     });
@@ -352,6 +378,7 @@ export async function readJob(runId: string): Promise<void> {
     stage: "done",
     queue: null,
     error: null,
+    errorCode: null,
     dimensions: data?.dimensions ?? [],
     failed: data?.failed ?? [],
     readMs: data?.elapsed_ms ?? null,

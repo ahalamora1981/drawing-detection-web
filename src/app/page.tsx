@@ -3,43 +3,48 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import Header from "@/components/Header";
-import { apiFetch } from "@/lib/api";
+import { apiFetch, ApiError, readApiError } from "@/lib/api";
 import { getSessionId } from "@/lib/session";
+import { errorText, useI18n, type Translate } from "@/lib/i18n";
 import type { GalleryImage, RunSummary } from "@/lib/types";
 
 const MAX_UPLOADS = 5;
 
-function statusOf(run: RunSummary | null): { text: string; color: string } {
-  if (!run) return { text: "未检测", color: "var(--color-muted-soft)" };
+function statusOf(
+  run: RunSummary | null,
+  t: Translate
+): { text: string; color: string } {
+  if (!run) return { text: t("status.untested"), color: "var(--color-muted-soft)" };
   switch (run.stage) {
     case "queued":
-      return { text: "排队中", color: "var(--color-muted)" };
+      return { text: t("status.queued"), color: "var(--color-muted)" };
     case "locating":
-      return { text: "正在定位…", color: "var(--color-primary)" };
+      return { text: t("status.locating"), color: "var(--color-primary)" };
     case "located":
-      return { text: `已定位 ${run.boxCount} 处`, color: "var(--color-body)" };
+      return { text: t("status.located", { n: run.boxCount }), color: "var(--color-body)" };
     case "reading":
       return {
-        text: `识别中 ${run.detectedCount}/${run.boxCount}`,
+        text: t("status.reading", { done: run.detectedCount, total: run.boxCount }),
         color: "var(--color-primary)",
       };
     case "done":
       return {
         text:
           run.reviewCount > 0
-            ? `已识别 ${run.detectedCount} 条 · ${run.reviewCount} 待复核`
-            : `已识别 ${run.detectedCount} 条`,
+            ? t("status.doneReview", { n: run.detectedCount, m: run.reviewCount })
+            : t("status.done", { n: run.detectedCount }),
         color: run.reviewCount > 0 ? "var(--color-warning)" : "var(--color-success)",
       };
     case "error":
-      return { text: "上次运行失败 · 可重试", color: "var(--color-error)" };
+      return { text: t("status.failed"), color: "var(--color-error)" };
     default:
-      return { text: "未检测", color: "var(--color-muted-soft)" };
+      return { text: t("status.untested"), color: "var(--color-muted-soft)" };
   }
 }
 
 export default function GalleryPage() {
   const router = useRouter();
+  const { t } = useI18n();
   const [session, setSession] = useState("");
   const [tests, setTests] = useState<GalleryImage[]>([]);
   const [uploads, setUploads] = useState<GalleryImage[]>([]);
@@ -53,21 +58,24 @@ export default function GalleryPage() {
     setSession(getSessionId());
   }, []);
 
-  const load = useCallback(async (sid: string) => {
-    try {
-      const res = await apiFetch(
-        `/api/images?session=${encodeURIComponent(sid)}`
-      );
-      if (!res.ok) throw new Error("无法加载图纸列表。");
-      const data = await res.json();
-      setTests(data.images ?? []);
-      setUploads(data.uploads ?? []);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "加载失败");
-    } finally {
-      setLoading(false);
-    }
-  }, []);
+  const load = useCallback(
+    async (sid: string) => {
+      try {
+        const res = await apiFetch(
+          `/api/images?session=${encodeURIComponent(sid)}`
+        );
+        if (!res.ok) throw new ApiError(undefined, t("gallery.error.load"));
+        const data = await res.json();
+        setTests(data.images ?? []);
+        setUploads(data.uploads ?? []);
+      } catch (err) {
+        setError(errorText(t, err as Error, "gallery.error.loadShort"));
+      } finally {
+        setLoading(false);
+      }
+    },
+    [t]
+  );
 
   useEffect(() => {
     if (!session) return;
@@ -82,15 +90,15 @@ export default function GalleryPage() {
       const isPng = file.type === "image/png";
       const isJpg = file.type === "image/jpeg";
       if (!isPng && !isJpg) {
-        setError("只支持 PNG 和 JPG 图纸。");
+        setError(t("gallery.error.type"));
         return;
       }
       if (file.size > 10 * 1024 * 1024) {
-        setError("单张图纸不能超过 10 MB。");
+        setError(t("gallery.error.size"));
         return;
       }
       if (uploadsFull) {
-        setError(`本次会话最多上传 ${MAX_UPLOADS} 张，刷新页面可重新开始。`);
+        setError(t("gallery.error.limit", { n: MAX_UPLOADS }));
         return;
       }
       setError(null);
@@ -103,16 +111,15 @@ export default function GalleryPage() {
           method: "POST",
           body: form,
         });
-        const data = await res.json();
-        if (!res.ok) throw new Error(data.error || "上传失败");
+        if (!res.ok) throw await readApiError(res);
         await load(session);
       } catch (err) {
-        setError(err instanceof Error ? err.message : "上传失败");
+        setError(errorText(t, err as Error, "gallery.error.upload"));
       } finally {
         setBusy(false);
       }
     },
-    [session, uploadsFull, load]
+    [session, uploadsFull, load, t]
   );
 
   const removeUpload = useCallback(
@@ -124,16 +131,13 @@ export default function GalleryPage() {
           `/api/upload?name=${encodeURIComponent(filename)}&session=${encodeURIComponent(session)}`,
           { method: "DELETE" }
         );
-        if (!res.ok) {
-          const data = await res.json();
-          throw new Error(data.error || "删除失败");
-        }
+        if (!res.ok) throw await readApiError(res);
         await load(session);
       } catch (err) {
-        setError(err instanceof Error ? err.message : "删除失败");
+        setError(errorText(t, err as Error, "gallery.error.delete"));
       }
     },
-    [session, load]
+    [session, load, t]
   );
 
   const open = useCallback(
@@ -146,10 +150,9 @@ export default function GalleryPage() {
     [router]
   );
 
-  const totalUploads = uploads.length;
   const heroStats = useMemo(
-    () => `${tests.length} 张测试图纸 · ${totalUploads} 张本次上传`,
-    [tests.length, totalUploads]
+    () => t("gallery.stats", { tests: tests.length, uploads: uploads.length }),
+    [tests.length, uploads.length, t]
   );
 
   return (
@@ -159,18 +162,15 @@ export default function GalleryPage() {
       <div className="page">
         <div className="hero">
           <div>
-            <h1 className="hero-title font-display">图纸库</h1>
-            <p className="hero-sub">
-              先定位，再识别。系统先把图上的标注框出来，由你确认范围，再逐条读取数值、
-              公差与类型 —— 每一步都看得见，也都能改。
-            </p>
+            <h1 className="hero-title font-display">{t("gallery.title")}</h1>
+            <p className="hero-sub">{t("gallery.subtitle")}</p>
           </div>
           <div className="hero-flow">
-            <b>① 标注定位</b>
+            <b>{t("gallery.flow.locate")}</b>
             <span className="sep">——</span>
-            <b>② 内容识别</b>
+            <b>{t("gallery.flow.read")}</b>
             <span className="sep">——</span>
-            <b>③ 复核导出</b>
+            <b>{t("gallery.flow.review")}</b>
           </div>
         </div>
 
@@ -214,17 +214,17 @@ export default function GalleryPage() {
           <div style={{ flex: 1 }}>
             <p className="upload-title">
               {uploadsFull
-                ? `本次会话已上传 ${MAX_UPLOADS} 张`
+                ? t("gallery.upload.full", { n: MAX_UPLOADS })
                 : busy
-                  ? "正在上传…"
+                  ? t("gallery.upload.busy")
                   : dragOver
-                    ? "松开即可上传"
-                    : "上传图纸"}
+                    ? t("gallery.upload.drop")
+                    : t("gallery.upload.title")}
             </p>
             <p className="upload-copy">
               {uploadsFull
-                ? "删除一张后可继续上传，刷新页面会重新开始。"
-                : "拖拽到这里，或点击选择文件 · PNG / JPG · 单张 ≤ 10 MB"}
+                ? t("gallery.upload.fullHint")
+                : t("gallery.upload.hint")}
             </p>
           </div>
           <div className="section-count">
@@ -254,11 +254,11 @@ export default function GalleryPage() {
         {uploads.length > 0 && (
           <>
             <div className="section-head">
-              <h2 className="section-title">本次上传</h2>
+              <h2 className="section-title">{t("gallery.section.uploads")}</h2>
               <span className="section-count">{uploads.length}</span>
               <span className="section-rule" />
               <span className="section-count" style={{ fontFamily: "Inter" }}>
-                仅本次会话可见
+                {t("gallery.section.uploadsNote")}
               </span>
             </div>
             <div className="gallery-grid">
@@ -276,11 +276,11 @@ export default function GalleryPage() {
 
         {/* Tests */}
         <div className="section-head">
-          <h2 className="section-title">测试图纸</h2>
+          <h2 className="section-title">{t("gallery.section.tests")}</h2>
           <span className="section-count">{tests.length}</span>
           <span className="section-rule" />
           <span className="section-count" style={{ fontFamily: "Inter" }}>
-            {loading ? "加载中…" : heroStats}
+            {loading ? t("gallery.loading") : heroStats}
           </span>
         </div>
         <div className="gallery-grid">
@@ -302,7 +302,8 @@ function DrawingCard({
   onOpen: (image: GalleryImage) => void;
   onDelete?: (filename: string) => void;
 }) {
-  const status = statusOf(image.run);
+  const { t } = useI18n();
+  const status = statusOf(image.run, t);
   return (
     <div
       className="drawing-card"
@@ -317,12 +318,12 @@ function DrawingCard({
       }}
     >
       {image.source === "upload" && (
-        <span className="drawing-card__badge">本次会话</span>
+        <span className="drawing-card__badge">{t("gallery.badge.session")}</span>
       )}
       {onDelete && (
         <button
           className="drawing-card__delete"
-          title="删除这张图纸"
+          title={t("gallery.card.delete")}
           onClick={(e) => {
             e.stopPropagation();
             onDelete(image.filename);
@@ -343,7 +344,7 @@ function DrawingCard({
           <span className="dot" style={{ backgroundColor: status.color }} />
           <span>{status.text}</span>
           <span style={{ marginLeft: "auto", color: "var(--color-muted-soft)" }}>
-            {image.run ? "继续 →" : "开始 →"}
+            {image.run ? t("gallery.card.continue") : t("gallery.card.start")}
           </span>
         </div>
       </div>

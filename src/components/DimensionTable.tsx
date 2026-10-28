@@ -2,6 +2,7 @@
 
 import type { DetectedDimension } from "@/lib/types";
 import { DIMENSION_COLORS } from "@/lib/constants";
+import { useI18n } from "@/lib/i18n";
 
 interface DimensionTableProps {
   dimensions: DetectedDimension[];
@@ -42,10 +43,12 @@ export default function DimensionTable({
   onHover,
   onSelect,
 }: DimensionTableProps) {
+  const { t } = useI18n();
+
   if (dimensions.length === 0) {
     return (
       <div style={{ padding: 32, textAlign: "center", color: "var(--color-muted)", fontSize: 14 }}>
-        暂无识别结果
+        {t("table.empty")}
       </div>
     );
   }
@@ -56,21 +59,21 @@ export default function DimensionTable({
         <thead>
           <tr>
             <th style={{ width: 54 }}>#</th>
-            <th>原始文字</th>
-            <th>公称值</th>
-            <th>公差</th>
-            <th>单位</th>
-            <th>类型</th>
-            <th>特征</th>
-            <th>置信度</th>
-            <th>状态</th>
+            <th>{t("table.raw")}</th>
+            <th>{t("table.nominal")}</th>
+            <th>{t("table.tolerance")}</th>
+            <th>{t("table.unit")}</th>
+            <th>{t("table.type")}</th>
+            <th>{t("table.feature")}</th>
+            <th>{t("table.confidence")}</th>
+            <th>{t("table.status")}</th>
           </tr>
         </thead>
         <tbody>
           {dimensions.map((dim, index) => {
             const isSelected = selectedId === dim.item_id;
             const isHovered = hoveredId === dim.item_id;
-            const failed = dim.raw_text.startsWith("读取失败");
+            const failed = dim.read_failed === true || dim.raw_text === "READ_FAILED";
             return (
               <tr
                 key={dim.item_id}
@@ -112,7 +115,7 @@ export default function DimensionTable({
                     color: failed ? "var(--color-error)" : "var(--color-ink)",
                   }}
                 >
-                  {dim.raw_text}
+                  {failed ? t("table.failed") : dim.raw_text}
                 </td>
                 <td style={{ fontWeight: 500 }}>
                   {failed ? "—" : dim.nominal_value}
@@ -167,7 +170,7 @@ export default function DimensionTable({
                 </td>
                 <td>
                   {dim.needs_review ? (
-                    <span className="needs-review">⚠ 待复核</span>
+                    <span className="needs-review">{t("table.review")}</span>
                   ) : (
                     <span
                       style={{
@@ -176,7 +179,7 @@ export default function DimensionTable({
                         fontWeight: 500,
                       }}
                     >
-                      ✓ OK
+                      {t("table.ok")}
                     </span>
                   )}
                 </td>
