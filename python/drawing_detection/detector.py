@@ -23,6 +23,7 @@ from openai import (
 )
 from PIL import Image
 
+from .bbox import decide_space, item_rect, to_pixels
 from .locator import candidate_groups, find_text_groups, group_bbox, refine_bboxes
 from .models import BoundingBox, DetectedDimension, DetectionResult
 from .parser import create_detected_dimension, normalize_raw_text
@@ -824,30 +825,18 @@ class DrawingDetector:
 
     @staticmethod
     def _scale_bbox(item: dict, image_width: int, image_height: int) -> None:
-        """Convert normalized 0-1000 bbox coords to pixel coords."""
-        tl = item.get("bbox_top_left") or [0, 0]
-        br = item.get("bbox_bottom_right") or [0, 0]
-        try:
-            x1, y1 = float(tl[0]), float(tl[1])
-            x2, y2 = float(br[0]), float(br[1])
-        except (TypeError, ValueError, IndexError):
+        """Convert a model bbox to pixel coords (shared parser, one shape only).
+
+        Uses the same reader as the locate stage so a model that puts the full
+        rectangle in ``bbox_top_left`` cannot collapse the box to a point here
+        either.
+        """
+        rect = item_rect(item)
+        if rect is None:
             item["bbox_top_left"] = [0.0, 0.0]
             item["bbox_bottom_right"] = [0.0, 0.0]
             return
-
-        coords = [x1, y1, x2, y2]
-        if max(coords) <= NORM_SPACE and min(coords) >= 0:
-            # normalized space -> pixels
-            x1, x2 = x1 * image_width / NORM_SPACE, x2 * image_width / NORM_SPACE
-            y1, y2 = y1 * image_height / NORM_SPACE, y2 * image_height / NORM_SPACE
-        # else: already in pixel space
-
-        # Clamp to image bounds and normalize orientation
-        item["bbox_top_left"] = [
-            round(max(0.0, min(x1, x2)), 1),
-            round(max(0.0, min(y1, y2)), 1),
-        ]
-        item["bbox_bottom_right"] = [
-            round(min(image_width, max(x1, x2)), 1),
-            round(min(image_height, max(y1, y2)), 1),
-        ]
+        space = decide_space([rect])
+        x1, y1, x2, y2 = to_pixels(rect, space, image_width, image_height)
+        item["bbox_top_left"] = [round(x1, 1), round(y1, 1)]
+        item["bbox_bottom_right"] = [round(x2, 1), round(y2, 1)]

@@ -189,7 +189,8 @@ export function setBoxes(id: string, boxes: RunBox[]): RunState | null {
   // the exported image drawn for those boxes.
   invalidateAnnotated(id);
   return updateRun(id, {
-    boxes,
+    // A box the user drew or moved is confirmed by definition.
+    boxes: boxes.map((b) => ({ ...b, source: b.source ?? "user" })),
     dimensions: [],
     failed: [],
     progress: { done: 0, total: 0 },

@@ -108,10 +108,29 @@ TITLE_MIN_ASPECT = 8.0           # width/height must be very wide
 # where title blocks live.
 TITLE_BORDER_FRACTION = 0.78     # allowed only below this fraction of height
 
-# Refinement search window: candidates within this distance of the LLM
-# bbox center are considered (px, original space)
-MAX_MATCH_DISTANCE = 160
+# Refinement search window. A fixed pixel radius cannot work for both a 600px
+# sketch and a 6000px sheet, so the radius scales with the size of the box the
+# model returned (which is roughly the text height). The old flat 160px was
+# wide enough for a box to jump onto the annotation next door.
+MATCH_RADIUS_FACTOR = 8.0        # x box height
+MATCH_RADIUS_MIN = 60.0          # px, keeps small boxes workable
+MATCH_RADIUS_MAX = 220.0         # px, hard ceiling
+# Two candidate texts this close in cost means we cannot tell which one the
+# model meant: the box is snapped to the better one and flagged for review.
+AMBIGUOUS_RATIO = 1.6
+# How much an overlapping box beats a merely close one.
+OVERLAP_BONUS = 0.65
+MAX_MATCH_DISTANCE = 160         # legacy helper (candidate_groups) only
 BBOX_PADDING = 3                 # px added around the found text
+
+# Snap targets must look like dimension text. Dashes, arrowheads, centreline
+# crossings and section letters all survive the component filter above (they
+# are small dark blobs too) and used to sit inside the old 160px window, so a
+# sloppy box could snap onto the dashed bolt circle instead of the number.
+MIN_GROUP_GLYPHS = 2             # a dimension is never one blob
+GLYPH_MIN_HEIGHT_PX = 8          # px (original space)
+GLYPH_ASPECT_MIN = 0.45          # w/h; dashes are far wider (or narrower) than a glyph
+GLYPH_ASPECT_MAX = 1.8
 
 # Bands of dims closer than this vertically are matched jointly so that
 # adjacent parallel dimensions (e.g. stacked "47" / "32" texts) cannot
@@ -420,6 +439,24 @@ def _distance(a: tuple[float, float], b: tuple[float, float]) -> float:
     return ((a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2) ** 0.5
 
 
+def _is_snap_target(grp: TextGroup) -> bool:
+    """True if this group could be the printed text of a dimension.
+
+    ``grp.members`` are in ANALYSIS space (2x), so the glyph thresholds are
+    scaled here.
+    """
+    if len(grp.members) < MIN_GROUP_GLYPHS:
+        return False
+    min_height = GLYPH_MIN_HEIGHT_PX * ANALYSIS_SCALE
+    for comp in grp.members:
+        if comp.height < min_height:
+            continue
+        aspect = comp.width / comp.height if comp.height else 0.0
+        if GLYPH_ASPECT_MIN <= aspect <= GLYPH_ASPECT_MAX:
+            return True
+    return False
+
+
 def find_text_groups(image_path: str | Path) -> list[TextGroup]:
     """Return all text-like component groups found in the drawing (1x coords)."""
     img = _load_grayscale(image_path)
@@ -463,6 +500,13 @@ def find_text_groups(image_path: str | Path) -> list[TextGroup]:
     for g in groups:
         split.extend(_split_wide_group(g))
     groups = split
+    # Drop groups that cannot be a dimension annotation: single blobs (dashes,
+    # arrowheads, the section letter "A") and runs with no glyph-shaped member
+    # (centreline crossings). Keep everything when the filter would empty the
+    # list, so a sheet with one tiny annotation can still be snapped.
+    targets = [g for g in groups if _is_snap_target(g)]
+    if targets:
+        groups = targets
     # Map back to original image space
     return [_orig(g) for g in groups]
 
@@ -508,59 +552,188 @@ def _candidates(
     return out
 
 
-def _monotone_assign(
-    bbox_indices: list[int],
-    cands: list[list[tuple[float, int]]],
-    group_positions: list[int],
-) -> dict[int, int]:
-    """Assign bboxes to groups preserving left-to-right order.
+# Cost bookkeeping for the assignment: a real match is always cheaper than
+# leaving a box unmatched, and an impossible pair is never chosen.
+_UNMATCHED_COST = 1000.0
+_FORBIDDEN_COST = 1e6
 
-    Returns {bbox_index: group_index}. Uses DP over (bbox, group) pairs with
-    monotonicity (an earlier bbox cannot be assigned to a later group).
+
+@dataclass
+class Match:
+    """How one model box was matched to the text actually printed there."""
+
+    bbox: BoundingBox
+    found: bool
+    group_index: int | None = None
+    distance: float = float("inf")
+    overlap: float = 0.0
+    cost: float = float("inf")
+    norm: float = float("inf")
+    # Cost of the second-best candidate. Close to ``cost`` => ambiguous pick.
+    rival_cost: float = float("inf")
+
+
+def _rect_iou(a: tuple[float, ...], b: tuple[float, ...]) -> float:
+    """IoU of two (x1, y1, x2, y2) rectangles."""
+    ix1, iy1 = max(a[0], b[0]), max(a[1], b[1])
+    ix2, iy2 = min(a[2], b[2]), min(a[3], b[3])
+    iw, ih = max(0.0, ix2 - ix1), max(0.0, iy2 - iy1)
+    inter = iw * ih
+    if inter <= 0:
+        return 0.0
+    union = (a[2] - a[0]) * (a[3] - a[1]) + (b[2] - b[0]) * (b[3] - b[1]) - inter
+    return inter / union if union > 0 else 0.0
+
+
+def _match_radius(bbox: BoundingBox) -> float:
+    """Search radius for one box, scaled to the box (≈ text) size."""
+    w = max(1.0, bbox.bottom_right_x - bbox.top_left_x)
+    h = max(1.0, bbox.bottom_right_y - bbox.top_left_y)
+    scale = max(h, w / 3.0, 12.0)
+    return max(MATCH_RADIUS_MIN, min(MATCH_RADIUS_MAX, MATCH_RADIUS_FACTOR * scale))
+
+
+def _match_candidates(
+    bbox: BoundingBox, groups: list[TextGroup]
+) -> list[tuple[float, int, float, float, float]]:
+    """Plausible snap targets: (cost, group_index, distance, overlap, norm).
+
+    Cost is the centre distance normalised by glyph size, discounted when the
+    box and the text actually overlap — that is what makes a slightly-off but
+    correctly-targeted box beat a closer, unrelated piece of text.
     """
-    # bbox_indices sorted by center x; groups sorted by center x.
-    n = len(bbox_indices)
-    m = len(group_positions)
-    INF = 10**9
+    radius = _match_radius(bbox)
+    rect = (
+        bbox.top_left_x,
+        bbox.top_left_y,
+        bbox.bottom_right_x,
+        bbox.bottom_right_y,
+    )
+    box_h = max(1.0, rect[3] - rect[1])
+    out: list[tuple[float, int, float, float, float]] = []
+    for gi, g in enumerate(groups):
+        dist = _distance(g.center, bbox.center)
+        if dist > radius:
+            continue
+        overlap = _rect_iou(rect, (g.min_x, g.min_y, g.max_x, g.max_y))
+        norm = dist / max(10.0, 0.5 * (g.height + box_h))
+        out.append((norm * (1.0 - OVERLAP_BONUS * overlap), gi, dist, overlap, norm))
+    out.sort(key=lambda t: (t[0], t[1]))
+    return out
 
-    # cost[i][j] = distance if group j is a candidate for bbox i
-    cost = [[INF] * m for _ in range(n)]
-    for i, bi in enumerate(bbox_indices):
-        for dist, gi in cands[bi]:
-            if gi in group_positions:
-                cost[i][group_positions.index(gi)] = dist
 
-    # dp[i][j]: min cost assigning first i bboxes with bbox i-1 -> group j
-    dp = [[INF] * m for _ in range(n)]
-    parent = [[None] * m for _ in range(n)]
-    for j in range(m):
-        dp[0][j] = cost[0][j]
-    for i in range(1, n):
-        best_prev = INF
-        best_j = None
-        for j in range(m):
-            # dp[i][j] uses min over dp[i-1][j'] with j' < j (strictly)
-            if cost[i][j] < INF and best_prev < INF:
-                dp[i][j] = cost[i][j] + best_prev
-                parent[i][j] = best_j
-            if dp[i - 1][j] < best_prev:
-                best_prev = dp[i - 1][j]
-                best_j = j
-    # best final
-    best_cost, best_j = INF, None
-    for j in range(m):
-        if dp[n - 1][j] < best_cost:
-            best_cost, best_j = dp[n - 1][j], j
-    if best_j is None:
-        return {}
-    assignment: dict[int, int] = {}
-    j = best_j
-    for i in range(n - 1, -1, -1):
-        assignment[bbox_indices[i]] = group_positions[j]
-        j = parent[i][j] if parent[i][j] is not None else j
-        if j is None:
-            break
-    return assignment
+def _hungarian(cost: list[list[float]]) -> list[tuple[int, int]]:
+    """Minimum-cost assignment for a rectangular matrix (e-maxx / JV).
+
+    Returns (row, column) pairs. The algorithm needs at least as many columns
+    as rows, so a taller matrix is transposed first — otherwise it cannot find
+    an augmenting path and spins forever.
+    """
+    n = len(cost)
+    m = len(cost[0]) if n else 0
+    if n == 0 or m == 0:
+        return []
+    if n > m:
+        flipped = [[cost[i][j] for i in range(n)] for j in range(m)]
+        return [(i, j) for j, i in _hungarian(flipped)]
+    u = [0.0] * (n + 1)
+    v = [0.0] * (m + 1)
+    p = [0] * (m + 1)  # p[j] = 1-based row matched to column j
+    way = [0] * (m + 1)
+    for i in range(1, n + 1):
+        p[0] = i
+        j0 = 0
+        minv = [float("inf")] * (m + 1)
+        used = [False] * (m + 1)
+        while True:
+            used[j0] = True
+            i0 = p[j0]
+            delta = float("inf")
+            j1 = 0
+            for j in range(1, m + 1):
+                if used[j]:
+                    continue
+                cur = cost[i0 - 1][j - 1] - u[i0] - v[j]
+                if cur < minv[j]:
+                    minv[j] = cur
+                    way[j] = j0
+                if minv[j] < delta:
+                    delta = minv[j]
+                    j1 = j
+            for j in range(m + 1):
+                if used[j]:
+                    u[p[j]] += delta
+                    v[j] -= delta
+                else:
+                    minv[j] -= delta
+            j0 = j1
+            if p[j0] == 0:
+                break
+        while True:
+            j1 = way[j0]
+            p[j0] = p[j1]
+            j0 = j1
+            if j0 == 0:
+                break
+    return [(p[j] - 1, j - 1) for j in range(1, m + 1) if p[j] > 0]
+
+
+def refine_bboxes_detailed(
+    bboxes: list[BoundingBox],
+    groups: list[TextGroup],
+    image_width: int,
+    image_height: int,
+) -> list[Match]:
+    """Snap every box to the text it points at, one text per box.
+
+    Matching is GLOBAL and one-to-one: two boxes can never claim the same piece
+    of text (the old per-row-band matching could, because a band was built from
+    the raw box coordinates and two boxes 50px apart landed in different bands,
+    producing a duplicate box plus a lost annotation).
+    """
+    n = len(bboxes)
+    m = len(groups)
+    cands = [_match_candidates(b, groups) for b in bboxes]
+
+    assigned: dict[int, int] = {}
+    if n and m:
+        # Columns 0..m-1 are the text groups; columns m..m+n-1 are one private
+        # "leave this box unmatched" option per box, priced above any real match
+        # but below a forbidden pair.
+        width = m + n
+        cost = [[_FORBIDDEN_COST] * width for _ in range(n)]
+        for i, cl in enumerate(cands):
+            for c, gi, _dist, _ov, _norm in cl:
+                cost[i][gi] = c
+            cost[i][m + i] = _UNMATCHED_COST
+        for i, j in _hungarian(cost):
+            if j < m and cost[i][j] < _UNMATCHED_COST:
+                assigned[i] = j
+
+    results: list[Match] = []
+    for i, bbox in enumerate(bboxes):
+        gi = assigned.get(i)
+        if gi is None:
+            results.append(Match(bbox=bbox, found=False))
+            continue
+        detail = next((c for c in cands[i] if c[1] == gi), None)
+        cost, _gi, dist, overlap, norm = (
+            detail if detail else (float("inf"), gi, 0.0, 0.0, float("inf"))
+        )
+        rivals = [c[0] for c in cands[i] if c[1] != gi]
+        results.append(
+            Match(
+                bbox=group_bbox(groups[gi], image_width, image_height),
+                found=True,
+                group_index=gi,
+                distance=dist,
+                overlap=overlap,
+                cost=cost,
+                norm=norm,
+                rival_cost=min(rivals) if rivals else float("inf"),
+            )
+        )
+    return results
 
 
 def refine_bboxes(
@@ -569,63 +742,16 @@ def refine_bboxes(
     image_width: int,
     image_height: int,
 ) -> list[tuple[BoundingBox, bool]]:
-    """
-    Snap LLM bounding boxes to the nearest real text groups.
+    """Snap LLM bounding boxes to the nearest real text groups.
 
     Returns:
         List of (refined bbox, found_text). ``found_text`` is False when no
-        text-like pixels exist near the LLM location (caller should flag the
-        dimension for review).
+        text-like pixels exist near the LLM location.
     """
-    cands = [_candidates(b, groups, image_width, image_height) for b in bboxes]
-    results: list[tuple[BoundingBox, bool]] = []
-
-    # Partition bboxes into y-bands: annotations that are vertically close
-    # are matched jointly (order-preserving) so adjacent parallel dimensions
-    # cannot both grab the same text group. Well-separated bands (e.g. a
-    # caption at the bottom of the drawing) stay independent.
-    order_by_y = sorted(
-        range(len(bboxes)), key=lambda i: (bboxes[i].center[1], bboxes[i].center[0])
-    )
-    bands: list[list[int]] = []
-    band_max_y: list[float] = []
-    for i in order_by_y:
-        bbox = bboxes[i]
-        placed = False
-        for bi, band in enumerate(bands):
-            if bbox.top_left_y <= band_max_y[bi] + BAND_MERGE_GAP:
-                band.append(i)
-                band_max_y[bi] = max(band_max_y[bi], bbox.bottom_right_y)
-                placed = True
-                break
-        if not placed:
-            bands.append([i])
-            band_max_y.append(bbox.bottom_right_y)
-
-    assigned: dict[int, int] = {}
-    for band in bands:
-        if not band:
-            continue
-        # groups this band can see, sorted by center (x, y)
-        group_ids = sorted(
-            {gi for i in band for _, gi in cands[i]},
-            key=lambda gi: (groups[gi].center[0], groups[gi].center[1]),
-        )
-        if not group_ids:
-            continue
-        band_sorted = sorted(
-            band, key=lambda i: (bboxes[i].center[0], bboxes[i].center[1])
-        )
-        assignment = _monotone_assign(band_sorted, cands, group_ids)
-        assigned.update(assignment)
-
-    for i, bbox in enumerate(bboxes):
-        gi = assigned.get(i)
-        if gi is None:
-            results.append((bbox, False))
-            continue
-        results.append((group_bbox(groups[gi], image_width, image_height), True))
-    return results
+    return [
+        (m.bbox, m.found)
+        for m in refine_bboxes_detailed(bboxes, groups, image_width, image_height)
+    ]
 
 
 # Backwards-compatible single-bbox helper (used by tests)

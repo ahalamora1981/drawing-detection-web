@@ -34,8 +34,9 @@ from pathlib import Path
 
 from PIL import Image
 
-from .detector import NORM_SPACE, DrawingDetector
-from .locator import find_text_groups, refine_bboxes
+from .bbox import parse_boxes
+from .detector import DrawingDetector
+from .locator import AMBIGUOUS_RATIO, find_text_groups, refine_bboxes_detailed
 from .models import (
     BoundingBox,
     DetectionResult,
@@ -87,38 +88,6 @@ def _iou(a: dict, b: dict) -> float:
     return inter / union if union > 0 else 0.0
 
 
-def _raw_boxes(items: list[dict]) -> list[dict]:
-    """Extract {x1,y1,x2,y2} pixel boxes from the model's JSON items."""
-    out: list[dict] = []
-    for item in items:
-        tl = item.get("bbox_top_left") or item.get("top_left")
-        br = item.get("bbox_bottom_right") or item.get("bottom_right")
-        if not (isinstance(tl, (list, tuple)) and isinstance(br, (list, tuple))):
-            # Tolerate [x, y, w, h] or {x, y, w, h}
-            if isinstance(item.get("bbox"), (list, tuple)) and len(item["bbox"]) == 4:
-                x, y, w, h = (float(v) for v in item["bbox"])
-                tl, br = [x, y], [x + w, y + h]
-            else:
-                continue
-        try:
-            x1, y1, x2, y2 = float(tl[0]), float(tl[1]), float(br[0]), float(br[1])
-        except (TypeError, ValueError, IndexError):
-            continue
-        out.append({"x1": x1, "y1": y1, "x2": x2, "y2": y2})
-    return out
-
-
-def _to_pixels(box: dict, width: int, height: int) -> dict:
-    """Scale a normalized (0-1000) box to pixels; pass pixels through."""
-    x1, y1, x2, y2 = box["x1"], box["y1"], box["x2"], box["y2"]
-    if max(x1, y1, x2, y2) <= NORM_SPACE and min(x1, y1, x2, y2) >= 0:
-        x1, x2 = x1 * width / NORM_SPACE, x2 * width / NORM_SPACE
-        y1, y2 = y1 * height / NORM_SPACE, y2 * height / NORM_SPACE
-    x1, x2 = max(0.0, min(x1, x2)), min(float(width), max(x1, x2))
-    y1, y2 = max(0.0, min(y1, y2)), min(float(height), max(y1, y2))
-    return {"x1": x1, "y1": y1, "x2": x2, "y2": y2}
-
-
 def _dedupe(boxes: list[dict], threshold: float = 0.6) -> list[dict]:
     """Drop near-duplicate boxes, keeping the first (model order) one."""
     kept: list[dict] = []
@@ -164,9 +133,9 @@ def cmd_locate(args: argparse.Namespace) -> int:
         label="locate",
     )
     items = detector._parse_response(content)
-    boxes = _raw_boxes(items)
+    boxes, stats = parse_boxes(items, width, height)
     if not boxes:
-        _log("[locate] empty response, retrying once")
+        _log(f"[locate] unusable response ({stats}), retrying once")
         content = detector._call_llm(
             image_b64,
             media_type,
@@ -175,15 +144,18 @@ def cmd_locate(args: argparse.Namespace) -> int:
             max_tokens=2048,
             label="locate-retry",
         )
-        boxes = _raw_boxes(detector._parse_response(content))
-
-    boxes = [_to_pixels(b, width, height) for b in boxes]
+        items = detector._parse_response(content)
+        boxes, stats = parse_boxes(items, width, height)
+    _log(
+        f"[locate] model boxes: {len(boxes)} usable, "
+        f"{stats['invalid']} degenerate, space={stats['space']}"
+    )
 
     # Snap boxes to real text pixels: the model's box is an estimate, the
     # printed text is ground truth. This is what makes stage-1 boxes tight
     # enough for stage 2 to crop.
     groups = find_text_groups(image)
-    refined = refine_bboxes(
+    matches = refine_bboxes_detailed(
         [BoundingBox(top_left_x=b["x1"], top_left_y=b["y1"],
                      bottom_right_x=b["x2"], bottom_right_y=b["y2"]) for b in boxes],
         groups,
@@ -193,20 +165,39 @@ def cmd_locate(args: argparse.Namespace) -> int:
 
     snapped: list[dict] = []
     unsnapped = 0
-    for box, (bbox, found) in zip(boxes, refined):
-        if found:
-            x1, y1 = bbox.top_left_x, bbox.top_left_y
-            x2, y2 = bbox.bottom_right_x, bbox.bottom_right_y
+    for box, match in zip(boxes, matches):
+        if match.found:
+            x1, y1 = match.bbox.top_left_x, match.bbox.top_left_y
+            x2, y2 = match.bbox.bottom_right_x, match.bbox.bottom_right_y
+            # Distance alone is a poor warning sign: the snap exists precisely
+            # to fix the model's offset, and it usually lands on the right text.
+            # What a human should check is a genuine tie — two candidate texts
+            # that were equally plausible for this box.
+            if match.overlap > 0.25:
+                confidence, source = 0.9, "matched"
+            elif match.rival_cost >= AMBIGUOUS_RATIO * match.cost:
+                confidence, source = 0.75, "matched"
+            else:
+                confidence, source = 0.5, "unsure"
         else:
             unsnapped += 1
             if density == "conservative":
                 # Conservative mode: a box with no text under it is noise.
                 continue
             x1, y1, x2, y2 = box["x1"], box["y1"], box["x2"], box["y2"]
+            confidence = 0.35
+            source = "unsure"
         if (x2 - x1) < MIN_BOX_WIDTH or (y2 - y1) < MIN_BOX_PX:
             continue
         snapped.append({"x": round(x1, 1), "y": round(y1, 1),
-                        "w": round(x2 - x1, 1), "h": round(y2 - y1, 1)})
+                        "w": round(x2 - x1, 1), "h": round(y2 - y1, 1),
+                        "confidence": confidence, "source": source})
+
+    _log(
+        f"[locate] matched={sum(1 for b in snapped if b['source'] == 'matched')} "
+        f"unsure={sum(1 for b in snapped if b['source'] == 'unsure')} "
+        f"dropped_without_text={unsnapped}"
+    )
 
     # Read top-to-bottom, left-to-right so the numbering matches how a person
     # scans the sheet.
@@ -225,6 +216,10 @@ def cmd_locate(args: argparse.Namespace) -> int:
         "channel_used": detector._active_num,
         "elapsed_ms": int((time.time() - t0) * 1000),
         "dropped_without_text": unsnapped,
+        "model_boxes": len(boxes),
+        "invalid_boxes": stats["invalid"],
+        "coord_space": stats["space"],
+        "text_groups": len(groups),
     }
     _atomic_write_json(out / "locate.json", result)
     _log(f"[locate] {len(result_boxes)} boxes in {result['elapsed_ms']}ms")
@@ -285,8 +280,12 @@ def cmd_read(args: argparse.Namespace) -> int:
     for box in boxes:
         item_id = box["id"]
         x, y, w, h = float(box["x"]), float(box["y"]), float(box["w"]), float(box["h"])
-        pad_x = max(8.0, w * 0.10)
-        pad_y = max(6.0, h * 0.25)
+        # A box the snapper could not tie to printed text may be a few pixels
+        # off, so crop it generously: a clipped tolerance reads as garbage,
+        # extra margin just costs a few tokens.
+        unsure = box.get("source") == "unsure"
+        pad_x = max(8.0, w * (0.20 if unsure else 0.10))
+        pad_y = max(6.0, h * (0.50 if unsure else 0.25))
         crop_box = (
             max(0, int(x - pad_x)),
             max(0, int(y - pad_y)),

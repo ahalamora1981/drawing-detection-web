@@ -996,6 +996,12 @@ body {
     0 0 0 3px rgba(30, 58, 138, 0.3);
 }
 
+/* Locate stage: the engine found no printed text under this box. Amber and
+   dashed so it reads as "check me" instead of "confirmed". */
+.dbox--unsure {
+  border-style: dashed;
+}
+
 .dbox--locate:hover {
   box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.95),
     0 0 0 3px rgba(30, 58, 138, 0.22);

@@ -30,6 +30,13 @@ export interface RunBox {
   y: number;
   w: number;
   h: number;
+  /**
+   * How sure the locator is that this box sits on printed text:
+   * 0.9 overlapping text, 0.75 near text, 0.5 a far match, 0.35 no text found.
+   */
+  confidence?: number;
+  /** "matched" (locked onto text), "unsure" (needs a look), "user" (drawn). */
+  source?: "matched" | "unsure" | "user";
 }
 
 /** User-facing locate options. Each one actually changes the request sent to the model. */

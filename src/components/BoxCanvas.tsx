@@ -172,12 +172,17 @@ export default function BoxCanvas({
             const isSelected = selectedId === box.id;
             const isHovered = hoveredId === box.id;
             const review = !!dim?.needs_review;
+            // In the locate view a box the engine could not tie to printed text
+            // is amber and dashed: it is a guess, not a result.
+            const unsure = mode === "locate" && box.source === "unsure";
             const color =
               mode === "result" && dim
                 ? review
                   ? "var(--dim-review)"
                   : DIMENSION_COLORS[dim.dimension_type] ?? DIMENSION_COLORS.unknown
-                : "var(--dim-locate)";
+                : unsure
+                  ? "var(--dim-review)"
+                  : "var(--dim-locate)";
 
             return (
               <div
@@ -186,6 +191,7 @@ export default function BoxCanvas({
                 className={[
                   "dbox",
                   mode === "locate" ? "dbox--locate" : "",
+                  unsure ? "dbox--unsure" : "",
                   isSelected ? "dbox--selected" : "",
                   review ? "dbox--review" : "",
                   isHovered ? "dbox--selected" : "",
@@ -206,7 +212,9 @@ export default function BoxCanvas({
                     ? dim.read_failed || dim.raw_text === "READ_FAILED"
                       ? t("table.failed")
                       : dim.raw_text
-                    : t("ws.canvas.boxTitle", { n: index + 1 })
+                    : unsure
+                      ? t("ws.canvas.unsureTitle", { n: index + 1 })
+                      : t("ws.canvas.boxTitle", { n: index + 1 })
                 }
                 onPointerDown={(e) => {
                   e.stopPropagation();
